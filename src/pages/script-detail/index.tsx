@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ReactFlow,
@@ -27,7 +27,6 @@ import {
 import {
   IconSave,
   IconRefresh,
-  IconPlus,
   IconArrowLeft,
   IconEdit,
   IconSidebar,
@@ -37,8 +36,10 @@ import {
 import { getScriptById } from '../../services/scriptService';
 import { Script } from '../../types/script';
 import { Layer, StoryNode } from '../../types/layer';
-import { getLayersByScriptId, updateNodeContent } from '../../mock/data/layers';
+import { getLayersByScriptId, updateNodeContent, saveNodePositions } from '../../mock/data/layers';
 import AppLayout from '../../components/AppLayout';
+import FunctionMenu from './FunctionMenu';
+import CustomEdge from './CustomEdge';
 import './ScriptDetail.css';
 
 const { Content, Sider } = Layout;
@@ -54,7 +55,10 @@ export default function ScriptDetail() {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [currentNode, setCurrentNode] = useState<StoryNode | null>(null);
   const [formApi, setFormApi] = useState<any>(null);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
+  const [isRightCollapsed, setIsRightCollapsed] = useState(false);
+  const [addNodeModalVisible, setAddNodeModalVisible] = useState(false);
+  const saveTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -62,6 +66,27 @@ export default function ScriptDetail() {
       loadLayers();
     }
   }, [id]);
+
+  // 监听节点位置变化，自动保存（防抖）
+  useEffect(() => {
+    if (nodes.length === 0 || layers.length === 0) return;
+
+    // 清除之前的定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // 设置新的定时器，2秒后自动保存
+    saveTimeoutRef.current = window.setTimeout(() => {
+      handleAutoSave();
+    }, 2000);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [nodes]); // 当 nodes 变化时触发
 
   const loadScript = async () => {
     if (!id) return;
@@ -91,19 +116,34 @@ export default function ScriptDetail() {
 
     layersData.forEach((layer) => {
       const nodeCount = layer.nodes?.length || 0;
+      const isFirstLayer = layer.layer_order === 1;
+      const isLastLayer = layer.layer_order === layersData.length;
+
       layer.nodes?.forEach((node, index) => {
-        // 计算节点位置（金字塔结构，居中排列）
-        const x = layer.layer_order * 400; // 层之间的水平间距
-        // 垂直居中：根据节点总数计算，使节点在垂直方向居中分布
-        const startY = 100; // 起始Y位置
-        const y = startY + (index - (nodeCount - 1) / 2) * 120;
+        // 优先使用保存的位置，如果没有则计算默认位置
+        const x = node.position_x !== undefined && node.position_x !== null
+          ? node.position_x
+          : layer.layer_order * 400; // 层之间的水平间距
+
+        const y = node.position_y !== undefined && node.position_y !== null
+          ? node.position_y
+          : 100 + (index - (nodeCount - 1) / 2) * 120; // 垂直居中分布
+
+        // 设置连接点位置
+        // 第一层：只有输出，连接点在右侧
+        // 中间层：输入在左侧，输出在右侧
+        // 最后一层：只有输入，连接点在左侧
+        const sourcePosition = isLastLayer ? undefined : 'right'; // 输出连接点在右侧
+        const targetPosition = isFirstLayer ? undefined : 'left'; // 输入连接点在左侧
 
         flowNodes.push({
           id: node.id,
-          type: index === 0 && layer.layer_order === 1 ? 'input' :
-            index === nodeCount - 1 && layer.layer_order === layersData.length ? 'output' :
+          type: index === 0 && isFirstLayer ? 'input' :
+            index === nodeCount - 1 && isLastLayer ? 'output' :
               'default',
           position: { x, y },
+          sourcePosition: sourcePosition as any,
+          targetPosition: targetPosition as any,
           data: {
             label: node.title,
             content: node.content,
@@ -112,20 +152,20 @@ export default function ScriptDetail() {
         });
 
         // 添加分支连接（带动画和样式）
-        node.branches?.forEach((branch, branchIndex) => {
+        node.branches?.forEach((branch) => {
           flowEdges.push({
             id: branch.id,
             source: branch.from_node_id,
             target: branch.to_node_id,
             label: branch.branch_label || '',
-            type: 'smoothstep', // 使用平滑步骤样式
+            type: 'custom', // 使用自定义类型
             animated: true, // 启用动画
             style: {
               strokeWidth: 3,
-              stroke: branchIndex === 0 ? '#1890ff' : '#52c41a', // 选择A用蓝色，选择B用绿色
+              stroke: '#1890ff', // 统一使用蓝色
             },
             labelStyle: {
-              fill: branchIndex === 0 ? '#1890ff' : '#52c41a',
+              fill: '#1890ff',
               fontWeight: 600,
             },
             labelBgStyle: {
@@ -142,14 +182,130 @@ export default function ScriptDetail() {
   };
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+    (params: Connection) => {
+      if (!params.source || !params.target) return;
+
+      // 创建新的分支
+      const newBranchId = `branch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const newEdge: Edge = {
+        id: newBranchId,
+        source: params.source,
+        target: params.target,
+        label: '连接',
+        type: 'custom', // 使用自定义类型
+        animated: true,
+        style: {
+          strokeWidth: 3,
+          stroke: '#1890ff',
+        },
+        labelStyle: {
+          fill: '#1890ff',
+          fontWeight: 600,
+        },
+        labelBgStyle: {
+          fill: '#fff',
+          fillOpacity: 0.8,
+        },
+      };
+
+      // 更新 edges
+      setEdges((eds) => addEdge(newEdge, eds));
+
+      // 更新 layers 中的分支数据
+      const updatedLayers = layers.map(layer => ({
+        ...layer,
+        nodes: layer.nodes?.map(node => {
+          if (node.id === params.source) {
+            const existingBranches = node.branches || [];
+            const newBranch = {
+              id: newBranchId,
+              from_node_id: params.source!,
+              to_node_id: params.target!,
+              branch_label: '连接',
+              branch_type: 'default' as const,
+              branch_order: existingBranches.length + 1,
+              created_at: new Date().toISOString(),
+            };
+            return {
+              ...node,
+              branches: [...existingBranches, newBranch],
+            };
+          }
+          return node;
+        }),
+      }));
+
+      setLayers(updatedLayers);
+      Toast.success('连接创建成功');
+    },
+    [setEdges, layers]
   );
 
-  const handleSave = () => {
-    console.log('保存流程', { nodes, edges, script, layers });
-    Toast.success('保存成功');
-    // TODO: 保存剧本的层和节点数据
+  // 自动保存节点位置（静默保存，不显示提示）
+  const handleAutoSave = useCallback(async () => {
+    if (!id || nodes.length === 0 || layers.length === 0) return;
+
+    try {
+      // 更新所有节点的位置信息
+      const updatedLayers = layers.map(layer => ({
+        ...layer,
+        nodes: layer.nodes?.map(node => {
+          const flowNode = nodes.find((n: FlowNode) => n.id === node.id);
+          if (flowNode) {
+            return {
+              ...node,
+              position_x: flowNode.position.x,
+              position_y: flowNode.position.y,
+              updated_at: new Date().toISOString(),
+            };
+          }
+          return node;
+        }),
+        updated_at: new Date().toISOString(),
+      }));
+
+      // 保存到 mock 服务（实际应该调用 API）
+      await saveNodePositions(id, updatedLayers);
+
+      setLayers(updatedLayers);
+      // 静默保存，不显示提示
+    } catch (error) {
+      console.error('自动保存失败', error);
+    }
+  }, [id, nodes, layers]);
+
+  // 手动保存节点位置和所有数据
+  const handleSave = async () => {
+    if (!id) return;
+
+    try {
+      // 更新所有节点的位置信息
+      const updatedLayers = layers.map(layer => ({
+        ...layer,
+        nodes: layer.nodes?.map(node => {
+          const flowNode = nodes.find((n: FlowNode) => n.id === node.id);
+          if (flowNode) {
+            return {
+              ...node,
+              position_x: flowNode.position.x,
+              position_y: flowNode.position.y,
+              updated_at: new Date().toISOString(),
+            };
+          }
+          return node;
+        }),
+        updated_at: new Date().toISOString(),
+      }));
+
+      // 保存到 mock 服务（实际应该调用 API）
+      await saveNodePositions(id, updatedLayers);
+
+      setLayers(updatedLayers);
+      Toast.success('保存成功');
+    } catch (error) {
+      Toast.error('保存失败');
+      console.error(error);
+    }
   };
 
   const handleReset = () => {
@@ -164,6 +320,32 @@ export default function ScriptDetail() {
       setEditModalVisible(true);
     }
   };
+
+  // 处理连接线删除
+  const handleDeleteEdge = useCallback(
+    (edgeId: string) => {
+      // 从 edges 中删除
+      setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+
+      // 从 layers 中删除对应的分支
+      const updatedLayers = layers.map(layer => ({
+        ...layer,
+        nodes: layer.nodes?.map(node => {
+          if (node.branches) {
+            return {
+              ...node,
+              branches: node.branches.filter(branch => branch.id !== edgeId),
+            };
+          }
+          return node;
+        }),
+      }));
+
+      setLayers(updatedLayers);
+      Toast.success('连接线已删除');
+    },
+    [setEdges, layers]
+  );
 
   // 更新节点内容
   const handleUpdateNodeContent = async (values: any) => {
@@ -251,6 +433,66 @@ export default function ScriptDetail() {
     }));
   };
 
+  // 添加节点的处理函数
+  const handleAddNode = (values: any) => {
+    if (!id) return;
+
+    try {
+      // 找到要添加节点的层
+      const targetLayer = layers.find(l => l.id === values.layerId);
+      if (!targetLayer) {
+        Toast.error('找不到指定的层');
+        return;
+      }
+
+      // 生成新的节点ID
+      const newNodeId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // 计算节点顺序（当前层的节点数量 + 1）
+      const nodeOrder = (targetLayer.nodes?.length || 0) + 1;
+
+      // 创建新节点
+      const newNode: StoryNode = {
+        id: newNodeId,
+        layer_id: values.layerId,
+        node_order: nodeOrder,
+        title: values.title,
+        content: values.content,
+        duration: values.duration || 30,
+        metadata: {
+          camera_type: '全景',
+          characters: [],
+          scene: targetLayer.title,
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        branches: [], // 新节点初始没有分支
+      };
+
+      // 更新 layers 状态
+      const updatedLayers = layers.map(layer => {
+        if (layer.id === values.layerId) {
+          return {
+            ...layer,
+            nodes: [...(layer.nodes || []), newNode],
+            updated_at: new Date().toISOString(),
+          };
+        }
+        return layer;
+      });
+
+      setLayers(updatedLayers);
+
+      // 重新转换并更新 ReactFlow 节点
+      convertToFlowNodes(updatedLayers);
+
+      Toast.success('节点添加成功');
+    } catch (error) {
+      Toast.error('添加节点失败');
+      console.error(error);
+    }
+  };
+
   const headerExtra = (
     <Space spacing="loose">
       <Button
@@ -260,16 +502,21 @@ export default function ScriptDetail() {
       >
         返回
       </Button>
-      <Tooltip content={isCollapsed ? '展开侧边栏' : '折叠侧边栏'} position="bottom">
+      <Tooltip content={isLeftCollapsed ? '展开左侧栏' : '折叠左侧栏'} position="bottom">
         <Button
           icon={<IconSidebar />}
           theme="borderless"
           size="large"
-          onClick={() => setIsCollapsed(!isCollapsed)}
+          onClick={() => setIsLeftCollapsed(!isLeftCollapsed)}
         />
       </Tooltip>
-      <Tooltip content="添加节点" position="bottom">
-        <Button icon={<IconPlus />} theme="borderless" size="large" />
+      <Tooltip content={isRightCollapsed ? '展开右侧栏' : '折叠右侧栏'} position="bottom">
+        <Button
+          icon={<IconSidebar />}
+          theme="borderless"
+          size="large"
+          onClick={() => setIsRightCollapsed(!isRightCollapsed)}
+        />
       </Tooltip>
       <Tooltip content="重置" position="bottom">
         <Button
@@ -299,14 +546,15 @@ export default function ScriptDetail() {
       headerExtra={headerExtra}
     >
       <Layout style={{ height: 'calc(100vh - 72px)', position: 'relative' }}>
+        {/* 左侧栏：层结构 */}
         <Sider
           style={{
             backgroundColor: 'var(--semi-color-bg-1)',
             borderRight: '1px solid var(--semi-color-border)',
-            width: isCollapsed ? 0 : 280,
+            width: isLeftCollapsed ? 0 : 280,
             overflow: 'hidden',
             transition: 'width 0.3s ease',
-            opacity: isCollapsed ? 0 : 1,
+            opacity: isLeftCollapsed ? 0 : 1,
             position: 'relative',
           }}
         >
@@ -320,7 +568,7 @@ export default function ScriptDetail() {
                 theme="borderless"
                 type="tertiary"
                 size="small"
-                onClick={() => setIsCollapsed(true)}
+                onClick={() => setIsLeftCollapsed(true)}
                 style={{ minWidth: 'auto', padding: '4px 8px' }}
               />
             </div>
@@ -335,14 +583,14 @@ export default function ScriptDetail() {
             )}
           </div>
         </Sider>
-        {/* 折叠状态下的展开按钮 - 放在侧边栏外部 */}
-        {isCollapsed && (
+        {/* 左侧折叠状态下的展开按钮 */}
+        {isLeftCollapsed && (
           <Button
             icon={<IconChevronRight />}
             theme="solid"
             type="primary"
             size="small"
-            onClick={() => setIsCollapsed(false)}
+            onClick={() => setIsLeftCollapsed(false)}
             style={{
               position: 'absolute',
               left: 0,
@@ -354,6 +602,8 @@ export default function ScriptDetail() {
             }}
           />
         )}
+
+        {/* 中间内容区域 */}
         <Content
           style={{
             backgroundColor: 'var(--semi-color-bg-0)',
@@ -369,6 +619,13 @@ export default function ScriptDetail() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onNodeClick={handleNodeClick}
+              onPaneClick={() => {
+                // 点击画布时隐藏所有删除按钮
+                (window as any).selectedEdgeId = null;
+              }}
+              edgeTypes={{
+                custom: (props) => <CustomEdge {...props} onDelete={handleDeleteEdge} />,
+              }}
               fitView
             >
               <Background />
@@ -377,6 +634,13 @@ export default function ScriptDetail() {
             </ReactFlow>
           </div>
         </Content>
+
+        {/* 右侧栏：功能菜单 */}
+        <FunctionMenu
+          isCollapsed={isRightCollapsed}
+          onCollapse={setIsRightCollapsed}
+          onAddNode={() => setAddNodeModalVisible(true)}
+        />
       </Layout>
 
       {/* 编辑节点内容弹窗 */}
@@ -425,6 +689,63 @@ export default function ScriptDetail() {
               )}
             </div>
           )}
+        </Form>
+      </Modal>
+
+      {/* 添加节点弹窗 */}
+      <Modal
+        title="添加新节点"
+        visible={addNodeModalVisible}
+        onCancel={() => {
+          setAddNodeModalVisible(false);
+        }}
+        onOk={() => {
+          const values = formApi?.getValues();
+          if (values?.layerId && values?.title && values?.content) {
+            handleAddNode(values);
+            setAddNodeModalVisible(false);
+          }
+        }}
+        width={600}
+      >
+        <Form
+          getFormApi={(api) => setFormApi(api)}
+          labelPosition="left"
+          labelWidth={80}
+        >
+          <Form.Select
+            field="layerId"
+            label="选择层"
+            placeholder="请选择要添加节点的层"
+            rules={[{ required: true, message: '请选择层' }]}
+            style={{ width: '100%' }}
+          >
+            {layers.map(layer => (
+              <Form.Select.Option key={layer.id} value={layer.id}>
+                第{layer.layer_order}层 - {layer.title} ({layer.nodes?.length || 0}个节点)
+              </Form.Select.Option>
+            ))}
+          </Form.Select>
+          <Form.Input
+            field="title"
+            label="节点标题"
+            placeholder="请输入节点标题"
+            rules={[{ required: true, message: '请输入节点标题' }]}
+          />
+          <Form.TextArea
+            field="content"
+            label="节点内容"
+            placeholder="请输入节点内容"
+            autosize={{ minRows: 6 }}
+            rules={[{ required: true, message: '请输入节点内容' }]}
+          />
+          <Form.InputNumber
+            field="duration"
+            label="时长（秒）"
+            placeholder="请输入时长"
+            min={1}
+            style={{ width: '100%' }}
+          />
         </Form>
       </Modal>
     </AppLayout>

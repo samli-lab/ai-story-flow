@@ -124,6 +124,8 @@
 | title | VARCHAR(200) | NOT NULL | 节点标题 |
 | content | TEXT | NOT NULL | 节点内容（结构化文本） |
 | duration | INTEGER | NULL | 镜头长度（秒） |
+| position_x | NUMERIC | NULL | 节点在画布上的X坐标（用于前端可视化布局） |
+| position_y | NUMERIC | NULL | 节点在画布上的Y坐标（用于前端可视化布局） |
 | metadata | JSONB | NULL | 扩展元数据（JSON格式，可存储镜头类型、人物、场景等信息） |
 | created_at | TIMESTAMP | DEFAULT NOW() | 创建时间 |
 | updated_at | TIMESTAMP | DEFAULT NOW() | 更新时间 |
@@ -247,6 +249,8 @@ users (用户)
           "title": "实验室场景",
           "content": "科学家在实验室中...",
           "duration": 30,
+          "position_x": 400,
+          "position_y": 300,
           "branches": [
             {
               "to_node_id": "node-2",
@@ -290,7 +294,9 @@ SELECT
   n.node_order,
   n.title as node_title,
   n.content,
-  n.duration
+  n.duration,
+  n.position_x,
+  n.position_y
 FROM layers l
 LEFT JOIN nodes n ON l.id = n.layer_id
 WHERE l.script_id = $1
@@ -330,13 +336,13 @@ ORDER BY version_number DESC;
 
 ```sql
 -- 1. 创建新节点
-INSERT INTO nodes (layer_id, node_order, title, content, duration)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO nodes (layer_id, node_order, title, content, duration, position_x, position_y)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id;
 
 -- 2. 创建分支连接
 INSERT INTO branches (from_node_id, to_node_id, branch_label, branch_type)
-VALUES ($6, $7, '继续', 'default');
+VALUES ($8, $9, '继续', 'default');
 ```
 
 ### 6. Regen 操作：重写节点内容并保存版本
@@ -363,12 +369,45 @@ SET
 WHERE id = $1;
 ```
 
+### 7. 更新节点位置信息
+
+```sql
+-- 更新单个节点的位置
+UPDATE nodes
+SET 
+  position_x = $1,
+  position_y = $2,
+  updated_at = NOW()
+WHERE id = $3;
+
+-- 批量更新多个节点的位置（使用 JSONB 数组）
+-- 假设传入的格式为: [{"node_id": "uuid-1", "x": 400, "y": 300}, ...]
+UPDATE nodes
+SET 
+  position_x = (updates->>'x')::NUMERIC,
+  position_y = (updates->>'y')::NUMERIC,
+  updated_at = NOW()
+FROM jsonb_array_elements($1::jsonb) AS updates
+WHERE nodes.id = (updates->>'node_id')::UUID;
+```
+
 ## 数据库初始化脚本建议
 
 ### 启用 UUID 扩展
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+```
+
+### 为现有 nodes 表添加位置字段（如果表已存在）
+
+```sql
+-- 添加节点位置字段
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS position_x NUMERIC;
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS position_y NUMERIC;
+
+-- 可选：为位置字段添加索引（如果经常需要根据位置查询）
+CREATE INDEX IF NOT EXISTS idx_nodes_position ON nodes(position_x, position_y);
 ```
 
 ### 创建更新时间触发器函数
@@ -402,6 +441,7 @@ CREATE TRIGGER update_nodes_updated_at BEFORE UPDATE ON nodes
    - 所有外键字段已建立索引
    - 常用查询字段（如 `created_at`, `status`）已建立索引
    - 考虑为 JSONB 字段建立 GIN 索引（如果需要进行 JSON 查询）
+   - 如果经常需要根据位置信息查询节点，可以考虑为 `position_x` 和 `position_y` 建立复合索引
 
 2. **分区策略**
    - 如果 `node_versions` 表数据量很大，可以考虑按时间分区

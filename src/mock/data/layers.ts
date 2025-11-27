@@ -168,3 +168,17 @@ export const updateNodeContent = async (
   return null;
 };
 
+// 保存节点位置和所有层数据
+export const saveNodePositions = async (
+  scriptId: string,
+  layers: Layer[]
+): Promise<void> => {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  // 在实际应用中，这里应该调用 API 保存到数据库
+  // 目前只是模拟保存，数据保存在内存中
+  console.log('保存节点位置和层数据:', { scriptId, layers });
+  
+  // TODO: 实际应该调用 API，例如：
+  // await api.post(`/scripts/${scriptId}/layers`, { layers });
+};
+

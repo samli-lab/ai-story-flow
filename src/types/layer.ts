@@ -19,6 +19,8 @@ export interface StoryNode {
   title: string;
   content: string;
   duration?: number;
+  position_x?: number; // 节点在画布上的X坐标
+  position_y?: number; // 节点在画布上的Y坐标
   metadata?: {
     camera_type?: string;
     characters?: string[];
