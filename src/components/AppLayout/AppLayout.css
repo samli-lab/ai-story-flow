@@ -1,0 +1,12 @@
+.app-layout-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 72px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--semi-color-border);
+}
+
+.user-info-trigger:hover {
+  background-color: var(--semi-color-fill-0);
+}

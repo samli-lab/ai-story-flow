@@ -2,3 +2,50 @@
   background-color: var(--semi-color-fill-0);
 }
 
+.dashboard-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.dashboard-hero {
+  text-align: center;
+  padding: 80px 0;
+  margin-bottom: 64px;
+}
+
+.dashboard-recent {
+  margin-top: 48px;
+}
+
+.recent-scripts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.recent-script-card-wrapper {
+  cursor: pointer;
+}
+
+.recent-script-card {
+  transition: all 0.2s;
+  height: 100%;
+}
+
+.recent-script-card-wrapper:hover .recent-script-card {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.recent-script-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dashboard-empty {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
