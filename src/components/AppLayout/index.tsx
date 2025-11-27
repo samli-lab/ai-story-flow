@@ -39,7 +39,7 @@ export default function AppLayout({
 }: AppLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
 
   const navItems = [
     {
@@ -84,11 +84,9 @@ export default function AppLayout({
       <Sider
         style={{
           backgroundColor: 'var(--semi-color-bg-1)',
-
+          width: isCollapsed ? 60 : 240,
         }}
-        width={isCollapsed ? 60 : 240}
-        collapsible
-        onCollapse={(collapsed) => setIsCollapsed(collapsed)}
+        {...({ collapsible: true, onCollapse: (collapsed: boolean) => setIsCollapsed(collapsed) } as any)}
       >
         <div className="app-layout-logo" style={{ borderRight: '1px solid var(--semi-color-border)' }}>
           {!isCollapsed && (

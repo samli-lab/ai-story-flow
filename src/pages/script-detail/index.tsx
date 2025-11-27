@@ -105,10 +105,6 @@ export default function ScriptDetail() {
     setEdges(initialEdges);
   };
 
-  const toggleSidebar = () => {
-    setIsCollapsed(!isCollapsed);
-  };
-
   const headerExtra = (
     <Space spacing="loose">
       <Button
