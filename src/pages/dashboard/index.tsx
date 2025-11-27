@@ -1,241 +1,145 @@
-import { useCallback, useState } from "react";
+import { useNavigate } from 'react-router-dom';
 import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  addEdge,
-  useNodesState,
-  useEdgesState,
-  Connection,
-  Edge,
-  Node,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import {
-  Layout,
-  Nav,
-  Button,
   Typography,
+  Card,
+  Button,
   Space,
-  Tooltip,
-  Avatar,
-  Dropdown,
-} from "@douyinfe/semi-ui";
+  Empty,
+} from '@douyinfe/semi-ui';
 import {
-  IconSave,
-  IconRefresh,
   IconPlus,
-  IconSetting,
-  IconHome,
-  IconSidebar,
-  IconUser,
-  IconExit,
-} from "@douyinfe/semi-icons";
-import "./Dashboard.css";
+} from '@douyinfe/semi-icons';
+import { useEffect, useState } from 'react';
+import { getScripts } from '../../services/scriptService';
+import { Script } from '../../types/script';
+import AppLayout from '../../components/AppLayout';
+import './Dashboard.css';
 
-const { Header, Content, Sider } = Layout;
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
-const initialNodes: Node[] = [
-  {
-    id: "1",
-    type: "input",
-    data: { label: "开始" },
-    position: { x: 250, y: 0 },
-  },
-  {
-    id: "2",
-    data: { label: "AI 处理节点" },
-    position: { x: 100, y: 100 },
-  },
-  {
-    id: "3",
-    data: { label: "决策节点" },
-    position: { x: 400, y: 100 },
-  },
-  {
-    id: "4",
-    type: "output",
-    data: { label: "结束" },
-    position: { x: 250, y: 200 },
-  },
-];
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const [recentScripts, setRecentScripts] = useState<Script[]>([]);
+  const [loading, setLoading] = useState(false);
 
-const initialEdges: Edge[] = [
-  { id: "e1-2", source: "1", target: "2" },
-  { id: "e1-3", source: "1", target: "3" },
-  { id: "e2-4", source: "2", target: "4" },
-  { id: "e3-4", source: "3", target: "4" },
-];
+  useEffect(() => {
+    loadRecentScripts();
+  }, []);
 
-function Dashboard() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [isCollapsed, setIsCollapsed] = useState(false);
-
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
-  );
-
-  const handleSave = () => {
-    console.log("保存流程", { nodes, edges });
+  const loadRecentScripts = async () => {
+    setLoading(true);
+    try {
+      const scripts = await getScripts();
+      // 获取最近更新的5个剧本
+      const sorted = scripts
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, 5);
+      setRecentScripts(sorted);
+    } catch (error) {
+      console.error('加载剧本失败', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleReset = () => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  };
-
-  const toggleSidebar = () => {
-    setIsCollapsed(!isCollapsed);
+  const getStatusText = (status: string) => {
+    const textMap: Record<string, string> = {
+      draft: '草稿',
+      editing: '编辑中',
+      completed: '已完成',
+      archived: '已归档',
+    };
+    return textMap[status] || status;
   };
 
   return (
-    <Layout style={{ height: "100vh" }}>
-      <Header
-        style={{
-          backgroundColor: "var(--semi-color-bg-0)",
-          borderBottom: "1px solid var(--semi-color-border)",
-          padding: "0 32px",
-          height: 72,
-          minHeight: 72,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            height: "100%",
-          }}
-        >
-          <Space spacing="loose">
-            <Button
-              icon={<IconSidebar />}
-              theme="borderless"
-              onClick={toggleSidebar}
-              style={{ marginRight: 8 }}
-            />
-            <IconHome size="extra-large" style={{ color: "var(--semi-color-primary)" }} />
-            <Title heading={3} style={{ margin: 0, fontWeight: 600 }}>
-              AI Story Flow
+    <AppLayout headerTitle="首页">
+      <div style={{ padding: '48px', backgroundColor: 'var(--semi-color-bg-1)' }}>
+        <div className="dashboard-container">
+          <div className="dashboard-hero">
+            <Title heading={1} style={{ marginBottom: 16 }}>
+              欢迎使用 AI Story Flow
             </Title>
-          </Space>
-          <Space spacing="loose">
-            <Tooltip content="添加节点" position="bottom">
-              <Button icon={<IconPlus />} theme="borderless" size="large" />
-            </Tooltip>
-            <Tooltip content="重置" position="bottom">
-              <Button icon={<IconRefresh />} theme="borderless" size="large" onClick={handleReset} />
-            </Tooltip>
-            <Tooltip content="保存" position="bottom">
+            <Text type="secondary" style={{ marginBottom: 32, fontSize: 16 }}>
+              专业的AI剧本创作平台，让故事创作更简单、更高效
+            </Text>
+            <br />
+            <br />
+            <Space>
               <Button
-                icon={<IconSave />}
+                icon={<IconPlus />}
                 theme="solid"
                 type="primary"
                 size="large"
-                onClick={handleSave}
+                onClick={() => navigate('/scripts')}
               >
-                保存
+                开始创作
               </Button>
-            </Tooltip>
-            <Dropdown
-              trigger="click"
-              position="bottomRight"
-              render={
-                <Dropdown.Menu>
-                  <Dropdown.Item icon={<IconSetting />}>
-                    个人设置
-                  </Dropdown.Item>
-                  <Dropdown.Item
-                    icon={<IconExit />}
-                    onClick={() => {
-                      console.log("退出登录");
-                      // 这里可以添加退出登录的逻辑
-                    }}
-                  >
-                    退出登录
-                  </Dropdown.Item>
-                </Dropdown.Menu>
-              }
-            >
-              <Space
-                style={{
-                  cursor: "pointer",
-                  padding: "8px 12px",
-                  borderRadius: "8px",
-                  transition: "background-color 0.2s",
-                }}
-                className="user-info-trigger"
-              >
-                <Avatar
-                  size="small"
-                  color="blue"
-                  style={{ backgroundColor: "var(--semi-color-primary)" }}
-                >
-                  <IconUser />
-                </Avatar>
-                <Typography.Text strong>用户名</Typography.Text>
-              </Space>
-            </Dropdown>
-          </Space>
-        </div>
-      </Header>
-      <Layout>
-        <Sider
-          style={{
-            backgroundColor: "var(--semi-color-bg-1)",
-            borderRight: "1px solid var(--semi-color-border)",
-            width: isCollapsed ? 60 : 240,
-            transition: "width 0.3s ease",
-          }}
-        >
-          <Nav
-            style={{ height: "100%" }}
-            items={[
-              {
-                itemKey: "nodes",
-                text: "节点库",
-                icon: <IconHome />,
-              },
-              {
-                itemKey: "templates",
-                text: "模板",
-                icon: <IconSetting />,
-              },
-            ]}
-            defaultOpenKeys={["nodes"]}
-            isCollapsed={isCollapsed}
-          />
-        </Sider>
-        <Content
-          style={{
-            backgroundColor: "var(--semi-color-bg-0)",
-            padding: 0,
-            position: "relative",
-          }}
-        >
-          <div style={{ width: "100%", height: "100%" }}>
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              fitView
-            >
-              <Background />
-              <Controls />
-              <MiniMap />
-            </ReactFlow>
+            </Space>
           </div>
-        </Content>
-      </Layout>
-    </Layout>
+
+          {recentScripts.length > 0 && (
+            <div className="dashboard-recent">
+              <Title heading={4} style={{ marginBottom: 24 }}>
+                最近编辑
+              </Title>
+              <div className="recent-scripts-grid">
+                {recentScripts.map(script => (
+                  <div
+                    key={script.id}
+                    className="recent-script-card-wrapper"
+                    onClick={() => navigate(`/script/${script.id}`)}
+                  >
+                    <Card className="recent-script-card">
+                      <div className="recent-script-content">
+                        <Text strong ellipsis={{ showTooltip: true }}>
+                          {script.title}
+                        </Text>
+                        {script.description && (
+                          <Text
+                            type="secondary"
+                            size="small"
+                            ellipsis={{ showTooltip: true, rows: 2 }}
+                            style={{ marginTop: 8 }}
+                          >
+                            {script.description}
+                          </Text>
+                        )}
+                        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text type="tertiary" size="small">
+                            {getStatusText(script.status)}
+                          </Text>
+                          <Text type="tertiary" size="small">
+                            {new Date(script.updated_at).toLocaleDateString('zh-CN')}
+                          </Text>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {recentScripts.length === 0 && !loading && (
+            <div className="dashboard-empty">
+              <Empty
+                description="还没有剧本，开始创建你的第一个剧本吧"
+                image={<IconPlus size="extra-large" />}
+              >
+                <Button
+                  icon={<IconPlus />}
+                  theme="solid"
+                  type="primary"
+                  onClick={() => navigate('/scripts')}
+                >
+                  创建剧本
+                </Button>
+              </Empty>
+            </div>
+          )}
+        </div>
+      </div>
+    </AppLayout>
   );
 }
-
-export default Dashboard;
-
