@@ -38,6 +38,7 @@ export default function CustomEdge({
   style = {},
   markerEnd,
   onDelete,
+  label,
 }: EdgeProps & { onDelete?: (id: string) => void }) {
   const [showDeleteButton, setShowDeleteButton] = useState(false);
   const edgeRef = useRef<SVGPathElement>(null);
@@ -141,32 +142,66 @@ export default function CustomEdge({
         onMouseDown={(e) => e.stopPropagation()}
       />
       <EdgeLabelRenderer>
-        {showDeleteButton && (
-          <div
-            className="edge-delete-button nodrag nopan"
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: 'all',
-              zIndex: 1000,
-            }}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <Button
-              icon={<IconDelete />}
-              theme="solid"
-              type="danger"
-              size="small"
-              onClick={handleDelete}
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+            zIndex: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 4,
+          }}
+          className="nodrag nopan"
+        >
+          {/* Label 展示 */}
+          {label && (
+            <div
+              onClick={handleEdgeClick}
+              onMouseDown={(e) => e.stopPropagation()}
               style={{
-                minWidth: 'auto',
-                padding: '4px 8px',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                padding: '2px 8px',
+                background: '#ffffff',
+                border: '1px solid #1890ff',
+                borderRadius: '10px',
+                fontSize: '11px',
+                color: '#1890ff',
+                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                fontWeight: 500,
+                transition: 'all 0.2s ease',
+                opacity: style.opacity || 1, // 跟随连线的透明度
               }}
-            />
-          </div>
-        )}
+            >
+              {label}
+            </div>
+          )}
+
+          {/* 删除按钮 */}
+          {showDeleteButton && (
+            <div
+              className="edge-delete-button"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <Button
+                icon={<IconDelete />}
+                theme="solid"
+                type="danger"
+                size="small"
+                onClick={handleDelete}
+                style={{
+                  minWidth: 'auto',
+                  padding: '4px 8px',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                  borderRadius: '12px',
+                }}
+              />
+            </div>
+          )}
+        </div>
       </EdgeLabelRenderer>
     </>
   );

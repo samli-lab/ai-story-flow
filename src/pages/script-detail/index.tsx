@@ -962,6 +962,11 @@ export default function ScriptDetail() {
               <MiniMap />
             </ReactFlow>
           </div>
+          <style>{`
+            .react-flow__attribution {
+              display: none !important;
+            }
+          `}</style>
         </Content>
 
         {/* 右侧栏：功能菜单 */}
