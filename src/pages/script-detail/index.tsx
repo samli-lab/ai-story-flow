@@ -66,6 +66,7 @@ export default function ScriptDetail() {
   const [layoutDirection, setLayoutDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const [highlightedNodeIds, setHighlightedNodeIds] = useState<Set<string>>(new Set());
   const highlightedNodeIdsRef = useRef<Set<string>>(new Set());
+  const selectedNodeRef = useRef<StoryNode | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
 
   // 使用 ref 来解决闭包陷阱，确保 onData 中的回调始终是最新的
@@ -103,6 +104,28 @@ export default function ScriptDetail() {
       }
     };
   }, [nodes]); // 当 nodes 变化时触发
+
+  // 处理节点单击：更新选中的节点引用
+  const handleNodeClick = useCallback((_event: any, node: FlowNode) => {
+    const nodeData = node.data?.node as StoryNode;
+    selectedNodeRef.current = nodeData || null;
+  }, []);
+
+  // 监听键盘事件，处理空格键打开编辑弹窗
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Space' && selectedNodeRef.current && !editModalVisible) {
+        event.preventDefault(); // 防止页面滚动
+        setCurrentNode(selectedNodeRef.current);
+        setEditModalVisible(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [editModalVisible]);
 
   const loadScript = async () => {
     if (!id) return;
@@ -920,11 +943,13 @@ export default function ScriptDetail() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onNodeClick={handleNodeClick}
               onNodeDoubleClick={handleNodeDoubleClick}
               onPaneClick={() => {
                 // 点击画布时隐藏所有删除按钮和选中状态
                 (window as any).selectedEdgeId = null;
                 handleCancelTrace();
+                selectedNodeRef.current = null; // 清除选中的节点引用
               }}
               nodeTypes={nodeTypes}
               edgeTypes={{
