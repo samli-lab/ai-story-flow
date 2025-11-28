@@ -32,6 +32,7 @@ import {
   IconSidebar,
   IconChevronLeft,
   IconChevronRight,
+  IconRotate,
 } from '@douyinfe/semi-icons';
 import { getScriptById } from '../../services/scriptService';
 import { Script } from '../../types/script';
@@ -58,6 +59,7 @@ export default function ScriptDetail() {
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
   const [addNodeModalVisible, setAddNodeModalVisible] = useState(false);
+  const [layoutDirection, setLayoutDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const saveTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -110,9 +112,10 @@ export default function ScriptDetail() {
   };
 
   // 将层和节点数据转换为 ReactFlow 的 nodes 和 edges
-  const convertToFlowNodes = (layersData: Layer[]) => {
+  const convertToFlowNodes = (layersData: Layer[], ignoreSavedPositions: boolean = false, direction?: 'horizontal' | 'vertical') => {
     const flowNodes: FlowNode[] = [];
     const flowEdges: Edge[] = [];
+    const currentDirection = direction || layoutDirection;
 
     layersData.forEach((layer) => {
       const nodeCount = layer.nodes?.length || 0;
@@ -120,21 +123,40 @@ export default function ScriptDetail() {
       const isLastLayer = layer.layer_order === layersData.length;
 
       layer.nodes?.forEach((node, index) => {
-        // 优先使用保存的位置，如果没有则计算默认位置
-        const x = node.position_x !== undefined && node.position_x !== null
-          ? node.position_x
-          : layer.layer_order * 400; // 层之间的水平间距
+        // 根据布局方向计算默认位置
+        let x: number, y: number;
 
-        const y = node.position_y !== undefined && node.position_y !== null
-          ? node.position_y
-          : 100 + (index - (nodeCount - 1) / 2) * 120; // 垂直居中分布
+        if (currentDirection === 'horizontal') {
+          // 水平布局：从左到右
+          x = (!ignoreSavedPositions && node.position_x !== undefined && node.position_x !== null)
+            ? node.position_x
+            : layer.layer_order * 400; // 层之间的水平间距
+          y = (!ignoreSavedPositions && node.position_y !== undefined && node.position_y !== null)
+            ? node.position_y
+            : 100 + (index - (nodeCount - 1) / 2) * 120; // 垂直居中分布
+        } else {
+          // 垂直布局：从上到下
+          x = (!ignoreSavedPositions && node.position_x !== undefined && node.position_x !== null)
+            ? node.position_x
+            : 100 + (index - (nodeCount - 1) / 2) * 200; // 水平居中分布
+          y = (!ignoreSavedPositions && node.position_y !== undefined && node.position_y !== null)
+            ? node.position_y
+            : layer.layer_order * 200; // 层之间的垂直间距
+        }
 
         // 设置连接点位置
-        // 第一层：只有输出，连接点在右侧
-        // 中间层：输入在左侧，输出在右侧
-        // 最后一层：只有输入，连接点在左侧
-        const sourcePosition = isLastLayer ? undefined : 'right'; // 输出连接点在右侧
-        const targetPosition = isFirstLayer ? undefined : 'left'; // 输入连接点在左侧
+        let sourcePosition: string | undefined;
+        let targetPosition: string | undefined;
+
+        if (currentDirection === 'horizontal') {
+          // 水平布局：第一层输出在右侧，最后一层输入在左侧
+          sourcePosition = isLastLayer ? undefined : 'right';
+          targetPosition = isFirstLayer ? undefined : 'left';
+        } else {
+          // 垂直布局：第一层输出在底部，最后一层输入在顶部
+          sourcePosition = isLastLayer ? undefined : 'bottom';
+          targetPosition = isFirstLayer ? undefined : 'top';
+        }
 
         flowNodes.push({
           id: node.id,
@@ -179,6 +201,14 @@ export default function ScriptDetail() {
 
     setNodes(flowNodes);
     setEdges(flowEdges);
+  };
+
+  // 切换布局方向
+  const handleToggleLayoutDirection = () => {
+    const newDirection = layoutDirection === 'horizontal' ? 'vertical' : 'horizontal';
+    setLayoutDirection(newDirection);
+    // 重新转换节点位置，忽略已保存的位置，使用新的布局方向计算
+    convertToFlowNodes(layers, true, newDirection);
   };
 
   const onConnect = useCallback(
@@ -351,7 +381,7 @@ export default function ScriptDetail() {
   const handleUpdateNodeContent = async (values: any) => {
     if (!currentNode || !id) return;
     try {
-      const updated = await updateNodeContent(currentNode.id, values.content, layers);
+      const updated = await updateNodeContent(currentNode.id, values.content, layers, values.title);
       if (updated) {
         // 更新 layers 状态
         const updatedLayers = layers.map(layer => ({
@@ -368,6 +398,7 @@ export default function ScriptDetail() {
                 ...n,
                 data: {
                   ...(n.data || {}),
+                  label: updated.title,
                   content: updated.content,
                   node: updated
                 }
@@ -391,7 +422,13 @@ export default function ScriptDetail() {
     return layers.map(layer => ({
       label: (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text strong>{layer.title}</Text>
+          <Text
+            strong
+            ellipsis={{ showTooltip: false }}
+            style={{ maxWidth: '180px' }}
+          >
+            {layer.title}
+          </Text>
           <Text type="tertiary" size="small">
             {layer.nodes?.length || 0} 个节点
           </Text>
@@ -415,12 +452,17 @@ export default function ScriptDetail() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <IconEdit size="small" />
-              <Text>{node.title}</Text>
+              <Text
+                ellipsis={{ showTooltip: false }}
+                style={{ flex: 1, minWidth: 0 }}
+              >
+                {node.title}
+              </Text>
             </div>
             <Text
               type="secondary"
               size="small"
-              ellipsis={{ showTooltip: true, rows: 2 }}
+              ellipsis={{ showTooltip: false, rows: 1 }}
               style={{ marginTop: 4, display: 'block' }}
             >
               {node.content}
@@ -516,6 +558,14 @@ export default function ScriptDetail() {
           theme="borderless"
           size="large"
           onClick={() => setIsRightCollapsed(!isRightCollapsed)}
+        />
+      </Tooltip>
+      <Tooltip content={layoutDirection === 'horizontal' ? '切换为垂直布局' : '切换为水平布局'} position="bottom">
+        <Button
+          icon={<IconRotate />}
+          theme="borderless"
+          size="large"
+          onClick={handleToggleLayoutDirection}
         />
       </Tooltip>
       <Tooltip content="重置" position="bottom">
@@ -660,9 +710,16 @@ export default function ScriptDetail() {
           labelPosition="left"
           labelWidth={80}
           initValues={{
+            title: currentNode?.title || '',
             content: currentNode?.content || '',
           }}
         >
+          <Form.Input
+            field="title"
+            label="标题"
+            placeholder="请输入节点标题"
+            rules={[{ required: true, message: '请输入节点标题' }]}
+          />
           <Form.TextArea
             field="content"
             label="内容"
