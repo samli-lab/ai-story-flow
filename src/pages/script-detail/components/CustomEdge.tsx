@@ -142,11 +142,11 @@ export default function CustomEdge({
         onMouseDown={(e) => e.stopPropagation()}
       />
       <EdgeLabelRenderer>
-        <div
-          style={{
-            position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            pointerEvents: 'all',
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              pointerEvents: 'all',
             zIndex: 10,
             display: 'flex',
             flexDirection: 'column',
@@ -183,24 +183,24 @@ export default function CustomEdge({
           {showDeleteButton && (
             <div
               className="edge-delete-button"
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <Button
-                icon={<IconDelete />}
-                theme="solid"
-                type="danger"
-                size="small"
-                onClick={handleDelete}
-                style={{
-                  minWidth: 'auto',
-                  padding: '4px 8px',
-                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <Button
+              icon={<IconDelete />}
+              theme="solid"
+              type="danger"
+              size="small"
+              onClick={handleDelete}
+              style={{
+                minWidth: 'auto',
+                padding: '4px 8px',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
                   borderRadius: '12px',
-                }}
-              />
-            </div>
-          )}
+              }}
+            />
+          </div>
+        )}
         </div>
       </EdgeLabelRenderer>
     </>

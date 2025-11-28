@@ -33,7 +33,6 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconRotate,
-  IconSort,
 } from '@douyinfe/semi-icons';
 import { getScriptById } from '../../services/scriptService';
 import { Script } from '../../types/script';
@@ -253,12 +252,13 @@ export default function ScriptDetail() {
     convertToFlowNodes(layers, true, newDirection);
   };
 
-  // 一键整理：按照二叉树格式排列节点
-  const handleAutoLayout = () => {
+  // 一键整理：按照指定模式排列节点
+  const handleAutoLayout = (mode: 'tree' | 'compact' = 'tree') => {
     try {
       const updatedLayers = calculateNodePositions({
         layers,
-        layoutDirection
+        layoutDirection,
+        mode
       });
 
       if (updatedLayers) {
@@ -835,14 +835,6 @@ export default function ScriptDetail() {
           onClick={handleToggleLayoutDirection}
         />
       </Tooltip>
-      <Tooltip content="一键整理：按二叉树格式排列节点" position="bottom">
-        <Button
-          icon={<IconSort />}
-          theme="borderless"
-          size="large"
-          onClick={handleAutoLayout}
-        />
-      </Tooltip>
       <Tooltip content="重置" position="bottom">
         <Button
           icon={<IconRefresh />}
@@ -975,6 +967,7 @@ export default function ScriptDetail() {
           onCollapse={setIsRightCollapsed}
           onAddNode={() => setAddNodeModalVisible(true)}
           onAddLayer={() => setAddLayerModalVisible(true)}
+          onAutoLayout={handleAutoLayout}
         />
       </Layout>
 

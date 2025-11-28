@@ -1,5 +1,5 @@
-import { Toast } from '@douyinfe/semi-ui';
-import { StoryNode, Layer } from '../../../types/layer';
+import { Toast } from "@douyinfe/semi-ui";
+import { StoryNode, Layer } from "../../../types/layer";
 
 interface NodeDimension {
   id: string;
@@ -11,38 +11,105 @@ interface NodeDimension {
 
 interface AutoLayoutOptions {
   layers: Layer[];
-  layoutDirection: 'horizontal' | 'vertical';
+  layoutDirection: "horizontal" | "vertical";
+  mode?: "tree" | "compact";
   nodeWidth?: number;
   gapX?: number;
   gapY?: number;
 }
 
 /**
- * Auto-layout nodes in a tree structure (Reingold-Tilford simplified)
+ * Auto-layout nodes
  */
-export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | null => {
+export const calculateNodePositions = (
+  options: AutoLayoutOptions
+): Layer[] | null => {
   const {
     layers,
     layoutDirection,
+    mode = "tree",
     nodeWidth = 220,
     gapX = 60,
-    gapY = 180
+    gapY = 180,
   } = options;
 
   if (layers.length === 0) {
-    Toast.warning('没有可整理的节点');
+    Toast.warning("没有可整理的节点");
     return null;
   }
 
+  const isHorizontal = layoutDirection === "horizontal";
+
+  // 紧凑模式：按层简单排列
+  if (mode === "compact") {
+    const updatedLayers = layers.map((layer, layerIndex) => {
+      const nodeCount = layer.nodes?.length || 0;
+      if (nodeCount === 0) return layer;
+
+      const nodeHeight = 120; // 假设节点高度
+
+      // 在紧凑模式下，将 gapX 设置为非常小的值，使节点紧挨着
+      const compactGap = -20;
+
+      let totalSize;
+      if (isHorizontal) {
+        // 水平布局：同层节点垂直排列
+        totalSize = nodeCount * nodeHeight + (nodeCount - 1) * compactGap;
+      } else {
+        // 垂直布局：同层节点水平排列
+        totalSize = nodeCount * nodeWidth + (nodeCount - 1) * compactGap;
+      }
+
+      let startPos =
+        -totalSize / 2 + (isHorizontal ? nodeHeight : nodeWidth) / 2;
+
+      const updatedNodes = layer.nodes?.map((node, nodeIndex) => {
+        let x, y;
+
+        if (isHorizontal) {
+          // 水平布局：x由层决定，y由节点顺序决定
+          // 层间距稍微留一点空隙，不用完全紧贴
+          const layerGap = 200;
+          x = layerIndex * layerGap;
+          y = startPos + nodeIndex * (nodeHeight + compactGap);
+        } else {
+          // 垂直布局：y由层决定，x由节点顺序决定
+          // 层间距稍微留一点空隙
+          const layerGap = 190;
+          y = layerIndex * layerGap;
+          x = startPos + nodeIndex * (nodeWidth + compactGap);
+        }
+
+        // 加上偏移量，避免负坐标太偏
+        x += isHorizontal ? 100 : 400;
+        y += isHorizontal ? 300 : 100;
+
+        return {
+          ...node,
+          position_x: x,
+          position_y: y,
+          updated_at: new Date().toISOString(),
+        };
+      });
+
+      return {
+        ...layer,
+        nodes: updatedNodes,
+        updated_at: new Date().toISOString(),
+      };
+    });
+    return updatedLayers;
+  }
+
   try {
-    // 1. Build graph structure
+    // 1. Build graph structure (Tree mode)
     const nodeMap = new Map<string, StoryNode>();
     const edgesMap = new Map<string, string[]>(); // parent -> children
     const inDegreeMap = new Map<string, number>();
 
     // Initialize Maps
-    layers.forEach(layer => {
-      layer.nodes?.forEach(node => {
+    layers.forEach((layer) => {
+      layer.nodes?.forEach((node) => {
         nodeMap.set(node.id, node);
         if (!edgesMap.has(node.id)) edgesMap.set(node.id, []);
         if (!inDegreeMap.has(node.id)) inDegreeMap.set(node.id, 0);
@@ -50,9 +117,9 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
     });
 
     // Establish connections
-    layers.forEach(layer => {
-      layer.nodes?.forEach(node => {
-        node.branches?.forEach(branch => {
+    layers.forEach((layer) => {
+      layer.nodes?.forEach((node) => {
+        node.branches?.forEach((branch) => {
           const childId = branch.to_node_id;
           if (nodeMap.has(childId)) {
             edgesMap.get(node.id)?.push(childId);
@@ -69,18 +136,22 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
 
     // Fallback if no roots found
     if (roots.length === 0) {
-      const firstLayer = layers.find(l => l.layer_order === 1);
+      const firstLayer = layers.find((l) => l.layer_order === 1);
       if (firstLayer && firstLayer.nodes && firstLayer.nodes.length > 0) {
         roots = [firstLayer.nodes[0].id];
-      } else if (layers.length > 0 && layers[0].nodes && layers[0].nodes.length > 0) {
+      } else if (
+        layers.length > 0 &&
+        layers[0].nodes &&
+        layers[0].nodes.length > 0
+      ) {
         roots = [layers[0].nodes[0].id];
       }
     }
 
-    roots = roots.filter(id => nodeMap.has(id));
+    roots = roots.filter((id) => nodeMap.has(id));
 
     if (roots.length === 0) {
-      Toast.warning('无法确定根节点');
+      Toast.warning("无法确定根节点");
       return null;
     }
 
@@ -97,7 +168,7 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
         const children = edgesMap.get(u) || [];
         const validChildren: string[] = [];
 
-        children.forEach(v => {
+        children.forEach((v) => {
           if (!visited.has(v)) {
             visited.add(v);
             validChildren.push(v);
@@ -109,14 +180,14 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
       }
     };
 
-    roots.forEach(root => {
+    roots.forEach((root) => {
       if (!visited.has(root)) buildTree(root);
     });
 
     // 4. Calculate dimensions (Post-order)
     const calculateDimensions = (u: string): NodeDimension => {
       const childrenIds = layoutChildren.get(u) || [];
-      const childrenDims = childrenIds.map(v => calculateDimensions(v));
+      const childrenDims = childrenIds.map((v) => calculateDimensions(v));
 
       if (childrenDims.length === 0) {
         return {
@@ -124,14 +195,14 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
           leftExtent: nodeWidth / 2,
           rightExtent: nodeWidth / 2,
           x: 0,
-          children: []
+          children: [],
         };
       }
 
       let currentX = 0;
       const childCenters: number[] = [];
 
-      childrenDims.forEach(child => {
+      childrenDims.forEach((child) => {
         const childCenter = currentX + child.leftExtent;
         childCenters.push(childCenter);
         currentX += child.leftExtent + child.rightExtent + gapX;
@@ -155,23 +226,27 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
         leftExtent,
         rightExtent,
         x: 0,
-        children: childrenDims
+        children: childrenDims,
       };
     };
 
     // 5. Assign absolute positions (Pre-order)
     const newPositions = new Map<string, { x: number; y: number }>();
-    
-    const assignAbsolutePositions = (node: NodeDimension, startX: number, startY: number) => {
+
+    const assignAbsolutePositions = (
+      node: NodeDimension,
+      startX: number,
+      startY: number
+    ) => {
       newPositions.set(node.id, { x: startX, y: startY });
 
-      node.children.forEach(child => {
+      node.children.forEach((child) => {
         assignAbsolutePositions(child, startX + child.x, startY + gapY);
       });
     };
 
     let currentRootX = 0;
-    roots.forEach(root => {
+    roots.forEach((root) => {
       const rootDim = calculateDimensions(root);
       const rootX = currentRootX + rootDim.leftExtent;
       assignAbsolutePositions(rootDim, rootX, 0);
@@ -179,11 +254,11 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
     });
 
     // 6. Apply updates
-    const isHorizontal = layoutDirection === 'horizontal';
-    
-    const updatedLayers = layers.map(layer => ({
+    const isHorizontal = layoutDirection === "horizontal";
+
+    const updatedLayers = layers.map((layer) => ({
       ...layer,
-      nodes: layer.nodes?.map(node => {
+      nodes: layer.nodes?.map((node) => {
         const pos = newPositions.get(node.id);
         if (pos) {
           let finalX = pos.x;
@@ -195,8 +270,8 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
             finalY = temp;
           }
 
-          finalX += (isHorizontal ? 100 : 400);
-          finalY += (isHorizontal ? 300 : 100);
+          finalX += isHorizontal ? 100 : 400;
+          finalY += isHorizontal ? 300 : 100;
 
           return {
             ...node,
@@ -212,8 +287,7 @@ export const calculateNodePositions = (options: AutoLayoutOptions): Layer[] | nu
 
     return updatedLayers;
   } catch (error) {
-    console.error('Layout calculation failed:', error);
+    console.error("Layout calculation failed:", error);
     throw error;
   }
 };
-
