@@ -59,6 +59,7 @@ export default function ScriptDetail() {
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
   const [addNodeModalVisible, setAddNodeModalVisible] = useState(false);
+  const [addLayerModalVisible, setAddLayerModalVisible] = useState(false);
   const [layoutDirection, setLayoutDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const saveTimeoutRef = useRef<number | null>(null);
 
@@ -535,6 +536,48 @@ export default function ScriptDetail() {
     }
   };
 
+  // 添加层的处理函数
+  const handleAddLayer = (values: any) => {
+    if (!id) return;
+
+    try {
+      // 计算新的层顺序（当前最大层顺序 + 1）
+      const maxLayerOrder = layers.length > 0
+        ? Math.max(...layers.map(l => l.layer_order))
+        : 0;
+      const newLayerOrder = maxLayerOrder + 1;
+
+      // 生成新的层ID
+      const newLayerId = `layer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      // 创建新层
+      const newLayer: Layer = {
+        id: newLayerId,
+        script_id: id,
+        layer_order: newLayerOrder,
+        title: values.title || `第${newLayerOrder}层`,
+        description: values.description,
+        is_collapsed: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        nodes: [], // 新层初始没有节点
+      };
+
+      // 更新 layers 状态
+      const updatedLayers = [...layers, newLayer].sort((a, b) => a.layer_order - b.layer_order);
+      setLayers(updatedLayers);
+
+      // 重新转换并更新 ReactFlow 节点
+      convertToFlowNodes(updatedLayers);
+
+      setAddLayerModalVisible(false);
+      Toast.success('层添加成功');
+    } catch (error) {
+      Toast.error('添加层失败');
+      console.error(error);
+    }
+  };
+
   const headerExtra = (
     <Space spacing="loose">
       <Button
@@ -690,6 +733,7 @@ export default function ScriptDetail() {
           isCollapsed={isRightCollapsed}
           onCollapse={setIsRightCollapsed}
           onAddNode={() => setAddNodeModalVisible(true)}
+          onAddLayer={() => setAddLayerModalVisible(true)}
         />
       </Layout>
 
@@ -802,6 +846,41 @@ export default function ScriptDetail() {
             placeholder="请输入时长"
             min={1}
             style={{ width: '100%' }}
+          />
+        </Form>
+      </Modal>
+
+      {/* 添加层弹窗 */}
+      <Modal
+        title="添加新层"
+        visible={addLayerModalVisible}
+        onCancel={() => {
+          setAddLayerModalVisible(false);
+        }}
+        onOk={() => {
+          const values = formApi?.getValues();
+          if (values?.title) {
+            handleAddLayer(values);
+          }
+        }}
+        width={600}
+      >
+        <Form
+          getFormApi={(api) => setFormApi(api)}
+          labelPosition="left"
+          labelWidth={80}
+        >
+          <Form.Input
+            field="title"
+            label="层标题"
+            placeholder="请输入层标题"
+            rules={[{ required: true, message: '请输入层标题' }]}
+          />
+          <Form.TextArea
+            field="description"
+            label="层描述"
+            placeholder="请输入层描述（可选）"
+            autosize={{ minRows: 3 }}
           />
         </Form>
       </Modal>
