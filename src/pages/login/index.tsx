@@ -15,7 +15,7 @@ import {
   IconGithubLogo,
   IconHome,
 } from "@douyinfe/semi-icons";
-import "./Login.css";
+import "./styles/Login.css";
 
 const { Title, Text } = Typography;
 
