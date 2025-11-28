@@ -30,7 +30,7 @@ import {
   updateScriptTags,
 } from '../../services/scriptService';
 import AppLayout from '../../components/AppLayout';
-import './Scripts.css';
+import './styles/Scripts.css';
 
 const { Text, Title } = Typography;
 

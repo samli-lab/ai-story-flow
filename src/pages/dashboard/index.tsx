@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import { getScripts } from '../../services/scriptService';
 import { Script } from '../../types/script';
 import AppLayout from '../../components/AppLayout';
-import './Dashboard.css';
+import './styles/Dashboard.css';
 
 const { Title, Text } = Typography;
 
