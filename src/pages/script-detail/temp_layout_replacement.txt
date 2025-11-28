@@ -1,0 +1,26 @@
+  // 一键整理：按照二叉树格式排列节点
+  const handleAutoLayout = () => {
+    try {
+      const updatedLayers = calculateNodePositions({
+        layers,
+        layoutDirection
+      });
+
+      if (updatedLayers) {
+        setLayers(updatedLayers);
+        // 这里必须传入 false，表示不忽略已保存的位置，使用上面计算出的 position_x/y
+        convertToFlowNodes(updatedLayers, false, layoutDirection);
+        Toast.success('节点整理完成');
+      }
+    } catch (error) {
+      Toast.error('整理失败');
+      console.error(error);
+    }
+  };
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      if (!params.source || !params.target) return;
+
+      // 创建新的分支
+      const newBranchId = `branch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
