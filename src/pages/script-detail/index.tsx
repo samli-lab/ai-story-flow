@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ReactFlow,
@@ -64,7 +64,17 @@ export default function ScriptDetail() {
   const [addNodeModalVisible, setAddNodeModalVisible] = useState(false);
   const [addLayerModalVisible, setAddLayerModalVisible] = useState(false);
   const [layoutDirection, setLayoutDirection] = useState<'horizontal' | 'vertical'>('vertical');
+  const [highlightedNodeIds, setHighlightedNodeIds] = useState<Set<string>>(new Set());
+  const highlightedNodeIdsRef = useRef<Set<string>>(new Set());
   const saveTimeoutRef = useRef<number | null>(null);
+
+  // 使用 ref 来解决闭包陷阱，确保 onData 中的回调始终是最新的
+  const handleDeleteNodeRef = useRef<(nodeId: string) => void>(() => { });
+  const handleTraceAncestorsRef = useRef<(nodeId: string) => void>(() => { });
+
+  useEffect(() => {
+    highlightedNodeIdsRef.current = highlightedNodeIds;
+  }, [highlightedNodeIds]);
 
   useEffect(() => {
     if (id) {
@@ -172,6 +182,9 @@ export default function ScriptDetail() {
             label: node.title,
             content: node.content,
             node: node,
+            isDimmed: highlightedNodeIdsRef.current.size > 0 && !highlightedNodeIdsRef.current.has(node.id),
+            onDelete: () => handleDeleteNodeRef.current(node.id),
+            onTraceAncestors: () => handleTraceAncestorsRef.current(node.id),
           },
           style: {
             width: 200,
@@ -368,14 +381,18 @@ export default function ScriptDetail() {
     convertToFlowNodes(layers);
   };
 
-  // 处理节点点击
-  const handleNodeClick = (_event: any, node: FlowNode) => {
+  // 处理节点双击：打开编辑弹窗
+  const handleNodeDoubleClick = useCallback((_event: any, node: FlowNode) => {
     const nodeData = node.data?.node as StoryNode;
     if (nodeData) {
       setCurrentNode(nodeData);
       setEditModalVisible(true);
     }
-  };
+  }, []);
+
+  const nodeTypes = useMemo(() => ({
+    custom: CustomNode,
+  }), []);
 
   // 处理连接线删除
   const handleDeleteEdge = useCallback(
@@ -402,6 +419,162 @@ export default function ScriptDetail() {
     },
     [setEdges, layers]
   );
+
+  // 处理节点删除
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      if (!id) return;
+
+      try {
+        // 从 edges 中删除所有与该节点相关的连接
+        setEdges((eds) => eds.filter(
+          (e) => e.source !== nodeId && e.target !== nodeId
+        ));
+
+        // 从 layers 中删除节点和相关的分支
+        const updatedLayers = layers.map(layer => ({
+          ...layer,
+          nodes: layer.nodes?.filter(node => {
+            if (node.id === nodeId) {
+              return false; // 删除该节点
+            }
+            // 删除指向该节点的分支
+            if (node.branches) {
+              node.branches = node.branches.filter(
+                branch => branch.to_node_id !== nodeId
+              );
+            }
+            return true;
+          }),
+          updated_at: new Date().toISOString(),
+        }));
+
+        setLayers(updatedLayers);
+
+        // 重新转换节点（移除已删除的节点）
+        convertToFlowNodes(updatedLayers);
+
+        Toast.success('节点已删除');
+      } catch (error) {
+        Toast.error('删除节点失败');
+        console.error(error);
+      }
+    },
+    [id, edges, layers, setEdges]
+  );
+
+  // 向上溯源
+  const handleTraceAncestors = useCallback((nodeId: string) => {
+    const ancestors = new Set<string>();
+    const queue = [nodeId];
+    ancestors.add(nodeId); // 包括自己
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      // 找到所有指向当前节点的边
+      const incomingEdges = edges.filter(e => e.target === currentId);
+      incomingEdges.forEach(edge => {
+        if (!ancestors.has(edge.source)) {
+          ancestors.add(edge.source);
+          queue.push(edge.source);
+        }
+      });
+    }
+    setHighlightedNodeIds(ancestors);
+    Toast.info(`已高亮 ${ancestors.size} 个相关节点`);
+  }, [edges]);
+
+  // 取消高亮
+  const handleCancelTrace = useCallback(() => {
+    if (highlightedNodeIds.size > 0) {
+      setHighlightedNodeIds(new Set());
+    }
+  }, [highlightedNodeIds]);
+
+  // 监听 highlightedNodeIds 变化，更新节点和边的样式
+  useEffect(() => {
+    // 更新节点样式
+    setNodes((nds) =>
+      nds.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          isDimmed: highlightedNodeIds.size > 0 && !highlightedNodeIds.has(node.id),
+        },
+      }))
+    );
+
+    // 更新边样式
+    setEdges((eds) =>
+      eds.map((edge) => {
+        // 如果没有高亮，所有边都是动画的
+        if (highlightedNodeIds.size === 0) {
+          return {
+            ...edge,
+            animated: true,
+            style: {
+              ...edge.style,
+              stroke: '#1890ff',
+              strokeWidth: 3,
+              opacity: 1,
+            },
+            labelStyle: {
+              ...edge.labelStyle,
+              fill: '#1890ff',
+              opacity: 1,
+            }
+          };
+        }
+
+        // 如果连接的两个节点都在高亮集合中，该边也应该高亮并保持动画
+        // 注意：边的 source 和 target 必须都在 ancestors 集合中，
+        // 且对于向上溯源来说，应该是 target -> source 的查找路径上的边
+        // 但简单来说，只要边的两端都在高亮集合里，就认为是相关边
+        const isHighlighted = highlightedNodeIds.has(edge.source) && highlightedNodeIds.has(edge.target);
+
+        if (isHighlighted) {
+          return {
+            ...edge,
+            animated: true,
+            style: {
+              ...edge.style,
+              stroke: '#1890ff',
+              strokeWidth: 3,
+              opacity: 1,
+            },
+            labelStyle: {
+              ...edge.labelStyle,
+              fill: '#1890ff',
+              opacity: 1,
+            }
+          };
+        } else {
+          // 不相关的边变暗且静止
+          return {
+            ...edge,
+            animated: false,
+            style: {
+              ...edge.style,
+              stroke: '#999',
+              strokeWidth: 1,
+              opacity: 0.2,
+            },
+            labelStyle: {
+              ...edge.labelStyle,
+              fill: '#999',
+              opacity: 0.2,
+            }
+          };
+        }
+      })
+    );
+  }, [highlightedNodeIds, setNodes, setEdges]);
+
+  // 更新 ref
+  useEffect(() => {
+    handleDeleteNodeRef.current = handleDeleteNode;
+    handleTraceAncestorsRef.current = handleTraceAncestors;
+  }, [handleDeleteNode, handleTraceAncestors]);
 
   // 更新节点内容
   const handleUpdateNodeContent = async (values: any) => {
@@ -470,10 +643,13 @@ export default function ScriptDetail() {
               cursor: 'pointer',
             }}
             onClick={() => {
-              const flowNode = nodes.find((n: FlowNode) => n.id === node.id);
-              if (flowNode) {
-                handleNodeClick(null, flowNode);
-              }
+              // 选中节点
+              setNodes((nds) =>
+                nds.map((n) => ({
+                  ...n,
+                  selected: n.id === node.id,
+                }))
+              );
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -744,14 +920,13 @@ export default function ScriptDetail() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
-              onNodeClick={handleNodeClick}
+              onNodeDoubleClick={handleNodeDoubleClick}
               onPaneClick={() => {
-                // 点击画布时隐藏所有删除按钮
+                // 点击画布时隐藏所有删除按钮和选中状态
                 (window as any).selectedEdgeId = null;
+                handleCancelTrace();
               }}
-              nodeTypes={{
-                custom: CustomNode as any,
-              }}
+              nodeTypes={nodeTypes}
               edgeTypes={{
                 custom: (props) => <CustomEdge {...props} onDelete={handleDeleteEdge} />,
               }}
