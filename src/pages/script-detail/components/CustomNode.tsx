@@ -1,17 +1,17 @@
 import { memo } from 'react';
-import { Handle, Position, NodeProps } from '@xyflow/react';
+import { Handle, Position, NodeProps, Node } from '@xyflow/react';
 import { Typography } from '@douyinfe/semi-ui';
 import '../styles/CustomNode.css';
 
 const { Text } = Typography;
 
-interface CustomNodeData {
+type CustomNodeData = {
   label: string;
   content: string;
   node: any;
 }
 
-function CustomNode(props: NodeProps<CustomNodeData>) {
+function CustomNode(props: NodeProps<Node<CustomNodeData>>) {
   const { data, selected, sourcePosition, targetPosition } = props;
   // 根据 sourcePosition 和 targetPosition 确定连接点位置
   const getTargetPosition = () => {
