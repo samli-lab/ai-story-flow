@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { Handle, Position, NodeProps, Node } from '@xyflow/react';
 import { Typography } from '@douyinfe/semi-ui';
+import { IconDelete, } from '@douyinfe/semi-icons';
+import { IconSteps } from '@douyinfe/semi-icons-lab';
 import '../styles/CustomNode.css';
 
 const { Text } = Typography;
@@ -9,10 +11,16 @@ type CustomNodeData = {
   label: string;
   content: string;
   node: any;
+  isDimmed?: boolean;
+  onDelete?: () => void;
+  onTraceAncestors?: () => void;
 }
 
-function CustomNode(props: NodeProps<Node<CustomNodeData>>) {
+type CustomNodeProps = NodeProps<Node<CustomNodeData>>;
+
+function CustomNode(props: CustomNodeProps) {
   const { data, selected, sourcePosition, targetPosition } = props;
+
   // 根据 sourcePosition 和 targetPosition 确定连接点位置
   const getTargetPosition = () => {
     if (targetPosition === 'left') return Position.Left;
@@ -29,7 +37,9 @@ function CustomNode(props: NodeProps<Node<CustomNodeData>>) {
   };
 
   return (
-    <div className={`custom-node ${selected ? 'selected' : ''}`}>
+    <div
+      className={`custom-node ${selected ? 'selected' : ''} ${data.isDimmed ? 'dimmed' : ''}`}
+    >
       {targetPosition && (
         <Handle
           type="target"
@@ -54,6 +64,31 @@ function CustomNode(props: NodeProps<Node<CustomNodeData>>) {
           </Text>
         </div>
       </div>
+      {selected && (
+        <>
+          <div
+            className="trace-icon-wrapper"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onTraceAncestors?.();
+            }}
+            title="向上溯源"
+          >
+            {/* <IconArrowUp style={{ color: '#fff', fontSize: 14 }} /> */}
+            <IconSteps />
+          </div>
+          <div
+            className="delete-icon-wrapper"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onDelete?.();
+            }}
+            title="删除节点"
+          >
+            <IconDelete style={{ color: '#fff', fontSize: 14 }} />
+          </div>
+        </>
+      )}
       {sourcePosition && (
         <Handle
           type="source"

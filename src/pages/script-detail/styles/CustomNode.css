@@ -10,6 +10,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .custom-node:hover {
@@ -22,6 +23,11 @@
   border-color: #1890ff;
   box-shadow: 0 4px 16px rgba(24, 144, 255, 0.25);
   background: #f0f7ff;
+}
+
+.custom-node.dimmed {
+  opacity: 0.2;
+  filter: grayscale(100%);
 }
 
 .custom-node-content {
@@ -57,6 +63,53 @@
   min-height: 0;
 }
 
+.delete-icon-wrapper {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  background-color: #ff4d4f;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  z-index: 10;
+  opacity: 0.8;
+}
+
+.delete-icon-wrapper:hover {
+  background-color: #ff7875;
+  transform: scale(1.1);
+  opacity: 1;
+}
+
+.trace-icon-wrapper {
+  position: absolute;
+  bottom: 8px;
+  right: 40px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  z-index: 10;
+  opacity: 0.8;
+}
+
+.trace-icon-wrapper:hover {
+  background-color: #40a9ff;
+  transform: scale(1.1);
+  opacity: 1;
+}
+
 /* 连接点样式优化 */
 .custom-node .react-flow__handle {
   opacity: 0;
@@ -67,4 +120,3 @@
 .custom-node.selected .react-flow__handle {
   opacity: 1;
 }
-
