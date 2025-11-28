@@ -11,14 +11,23 @@ interface FunctionMenuProps {
   isCollapsed: boolean;
   onCollapse: (collapsed: boolean) => void;
   onAddNode: () => void;
+  onAddLayer: () => void;
 }
 
 export default function FunctionMenu({
   isCollapsed,
   onCollapse,
   onAddNode,
+  onAddLayer,
 }: FunctionMenuProps) {
   const menuItems = [
+    {
+      title: '添加层',
+      description: '添加新的层',
+      icon: <IconPlus />,
+      action: onAddLayer,
+      color: '#52c41a',
+    },
     {
       title: '添加节点',
       description: '在当前层添加新节点',
