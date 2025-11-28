@@ -13,7 +13,7 @@
 
 ## 数据库表设计
 
-### 1. 剧本表（scripts）
+### 1. 剧本表（BranchesScript）
 
 存储剧本的基本信息和元数据。
 
@@ -31,14 +31,14 @@
 | deleted_at | TIMESTAMP | NULL | 软删除时间 |
 
 **索引：**
-- `idx_scripts_status` ON `status`
-- `idx_scripts_created_at` ON `created_at DESC`
-- `idx_scripts_deleted_at` ON `deleted_at`
-- `idx_scripts_title` ON `title` (用于搜索)
+- `idx_BranchesScript_status` ON `status`
+- `idx_BranchesScript_createdAt` ON `created_at DESC`
+- `idx_BranchesScript_deletedAt` ON `deleted_at`
+- `idx_BranchesScript_title` ON `title` (用于搜索)
 
 ---
 
-### 2. 剧本标签表（script_tags）
+### 2. 剧本标签表（BranchesScriptTag）
 
 存储剧本的标签信息，支持多对多关系。
 
@@ -51,13 +51,12 @@
 | created_at | TIMESTAMP | DEFAULT NOW() | 创建时间 |
 
 **索引：**
-- `idx_script_tags_script_id` ON `script_id`
-- `idx_script_tags_tag_name` ON `tag_name`
-- `UNIQUE idx_script_tags_unique` ON (`script_id`, `tag_name`)
+- `idx_BranchesScriptTag_scriptId` ON `script_id`
+- `idx_BranchesScriptTag_tagName` ON `tag_name`
 
 ---
 
-### 3. 层表（layers）
+### 3. 层表（BranchesLayer）
 
 存储剧本的层级结构信息。
 
@@ -73,13 +72,12 @@
 | updated_at | TIMESTAMP | DEFAULT NOW() | 更新时间 |
 
 **索引：**
-- `idx_layers_script_id` ON `script_id`
-- `idx_layers_script_order` ON (`script_id`, `layer_order`)
-- `UNIQUE idx_layers_script_order_unique` ON (`script_id`, `layer_order`)
+- `idx_BranchesLayer_scriptId` ON `script_id`
+- `idx_BranchesLayer_scriptOrder` ON (`script_id`, `layer_order`)
 
 ---
 
-### 4. 节点表（nodes）
+### 4. 节点表（BranchesNode）
 
 存储每层中的具体片段节点信息。
 
@@ -98,14 +96,13 @@
 | updated_at | TIMESTAMP | DEFAULT NOW() | 更新时间 |
 
 **索引：**
-- `idx_nodes_layer_id` ON `layer_id`
-- `idx_nodes_layer_order` ON (`layer_id`, `node_order`)
-- `UNIQUE idx_nodes_layer_order_unique` ON (`layer_id`, `node_order`)
-- `idx_nodes_created_at` ON `created_at`
+- `idx_BranchesNode_layerId` ON `layer_id`
+- `idx_BranchesNode_layerOrder` ON (`layer_id`, `node_order`)
+- `idx_BranchesNode_createdAt` ON `created_at`
 
 ---
 
-### 5. 分支表（branches）
+### 5. 分支连接表（BranchesConnection）
 
 存储节点之间的连接关系，支持分支剧情。
 
@@ -121,14 +118,13 @@
 | created_at | TIMESTAMP | DEFAULT NOW() | 创建时间 |
 
 **索引：**
-- `idx_branches_from_node` ON `from_node_id`
-- `idx_branches_to_node` ON `to_node_id`
-- `idx_branches_from_order` ON (`from_node_id`, `branch_order`)
-- `UNIQUE idx_branches_unique` ON (`from_node_id`, `to_node_id`)
+- `idx_BranchesConnection_fromNodeId` ON `from_node_id`
+- `idx_BranchesConnection_toNodeId` ON `to_node_id`
+- `idx_BranchesConnection_fromOrder` ON (`from_node_id`, `branch_order`)
 
 ---
 
-### 6. 节点版本表（node_versions）
+### 6. 节点版本表（BranchesNodeVersion）
 
 存储节点的历史版本，支持版本回退和历史查看。
 
@@ -145,29 +141,28 @@
 | created_at | TIMESTAMP | DEFAULT NOW() | 创建时间 |
 
 **索引：**
-- `idx_node_versions_node_id` ON `node_id`
-- `idx_node_versions_node_version` ON (`node_id`, `version_number`)
-- `UNIQUE idx_node_versions_unique` ON (`node_id`, `version_number`)
-- `idx_node_versions_created_at` ON `created_at DESC`
+- `idx_BranchesNodeVersion_nodeId` ON `node_id`
+- `idx_BranchesNodeVersion_nodeVersion` ON (`node_id`, `version_number`)
+- `idx_BranchesNodeVersion_createdAt` ON `created_at DESC`
 
 ---
 
 ## 表关系图
 
 ```
-scripts (剧本) ──┐
-                 │
-                 ├── script_tags (剧本标签)
-                 │
-                 └── layers (层)
-                      │
-                      └── nodes (节点) ──┐
-                                         │
-                                         ├── branches (分支) ──┐
-                                         │                     │
-                                         │                     └── nodes (目标节点)
-                                         │
-                                         └── node_versions (节点版本)
+BranchesScript (剧本) ──┐
+                        │
+                        ├── BranchesScriptTag (剧本标签)
+                        │
+                        └── BranchesLayer (层)
+                             │
+                             └── BranchesNode (节点) ──┐
+                                                       │
+                                                       ├── BranchesConnection (分支连接) ──┐
+                                                       │                                   │
+                                                       │                                   └── BranchesNode (目标节点)
+                                                       │
+                                                       └── BranchesNodeVersion (节点版本)
 ```
 
 ## 数据示例

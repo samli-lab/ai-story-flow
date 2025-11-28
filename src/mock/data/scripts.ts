@@ -105,6 +105,19 @@ export const mockScripts: Script[] = [
       { id: 'tag-8', script_id: '5', tag_name: '恐怖', color: '#000000', created_at: '2024-01-05T15:00:00Z' },
     ],
   },
+  {
+    id: '003ab0f6-a980-49d5-b27b-3dfe49b64ce6',
+    user_id: 'user-1',
+    title: '故事test11.18 - 分支',
+    description: '从 CSV 导入的分支故事',
+    outline: undefined,
+    world_setting: undefined,
+    status: 'draft',
+    is_auto_generated: false,
+    created_at: '2025-11-27T21:19:31.000Z',
+    updated_at: '2025-11-27T21:19:31.000Z',
+    tags: [],
+  },
 ];
 
 // 模拟延迟
