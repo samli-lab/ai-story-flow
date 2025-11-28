@@ -1,8 +1,11 @@
-import { Button, Typography, List, Layout } from '@douyinfe/semi-ui';
+import { Button, Typography, List, Layout, Dropdown } from '@douyinfe/semi-ui';
 import {
   IconChevronRight,
   IconPlus,
+  IconSort,
+  IconGridStroked,
 } from '@douyinfe/semi-icons';
+import { IconTree } from '@douyinfe/semi-icons-lab';
 
 const { Title, Text } = Typography;
 const { Sider } = Layout;
@@ -12,6 +15,7 @@ interface FunctionMenuProps {
   onCollapse: (collapsed: boolean) => void;
   onAddNode: () => void;
   onAddLayer: () => void;
+  onAutoLayout: (mode: 'tree' | 'compact') => void;
 }
 
 export default function FunctionMenu({
@@ -19,6 +23,7 @@ export default function FunctionMenu({
   onCollapse,
   onAddNode,
   onAddLayer,
+  onAutoLayout,
 }: FunctionMenuProps) {
   const menuItems = [
     {
@@ -34,6 +39,14 @@ export default function FunctionMenu({
       icon: <IconPlus />,
       action: onAddNode,
       color: '#1890ff',
+    },
+    {
+      title: '一键整理',
+      description: '自动排列所有节点',
+      icon: <IconSort />,
+      action: () => { }, // 占位，实际由 Dropdown 处理
+      isDropdown: true,
+      color: '#722ed1',
     },
   ];
 
@@ -67,26 +80,8 @@ export default function FunctionMenu({
 
           <List
             dataSource={menuItems}
-            renderItem={(item: any) => (
-              <List.Item
-                style={{
-                  padding: '12px',
-                  marginBottom: '8px',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  backgroundColor: 'var(--semi-color-bg-0)',
-                }}
-                onClick={item.action}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--semi-color-fill-0)';
-                  e.currentTarget.style.transform = 'translateX(4px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--semi-color-bg-0)';
-                  e.currentTarget.style.transform = 'translateX(0)';
-                }}
-              >
+            renderItem={(item: any) => {
+              const content = (
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                   <div
                     style={{
@@ -112,8 +107,55 @@ export default function FunctionMenu({
                     </Text>
                   </div>
                 </div>
-              </List.Item>
-            )}
+              );
+
+              const listItem = (
+                <List.Item
+                  style={{
+                    padding: '12px',
+                    marginBottom: '8px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    backgroundColor: 'var(--semi-color-bg-0)',
+                  }}
+                  onClick={!item.isDropdown ? item.action : undefined}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--semi-color-fill-0)';
+                    e.currentTarget.style.transform = 'translateX(4px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--semi-color-bg-0)';
+                    e.currentTarget.style.transform = 'translateX(0)';
+                  }}
+                >
+                  {content}
+                </List.Item>
+              );
+
+              if (item.isDropdown) {
+                return (
+                  <Dropdown
+                    trigger="hover"
+                    position="rightTop"
+                    render={
+                      <Dropdown.Menu>
+                        <Dropdown.Item onClick={() => onAutoLayout('tree')} icon={<IconTree />}>
+                          结构视图 (层级结构)
+                        </Dropdown.Item>
+                        <Dropdown.Item onClick={() => onAutoLayout('compact')} icon={<IconGridStroked />}>
+                          紧凑视图 (网格排列)
+                        </Dropdown.Item>
+                      </Dropdown.Menu>
+                    }
+                  >
+                    {listItem}
+                  </Dropdown>
+                );
+              }
+
+              return listItem;
+            }}
           />
         </div>
       </Sider>
