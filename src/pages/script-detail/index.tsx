@@ -33,15 +33,18 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconRotate,
+  IconSort,
 } from '@douyinfe/semi-icons';
 import { getScriptById } from '../../services/scriptService';
 import { Script } from '../../types/script';
 import { Layer, StoryNode } from '../../types/layer';
 import { getLayersByScriptId, updateNodeContent, saveNodePositions } from '../../mock/data/layers';
 import AppLayout from '../../components/AppLayout';
-import FunctionMenu from './FunctionMenu';
-import CustomEdge from './CustomEdge';
-import './ScriptDetail.css';
+import { calculateNodePositions } from './utils/layoutUtils';
+import FunctionMenu from './components/FunctionMenu';
+import CustomEdge from './components/CustomEdge';
+import CustomNode from './components/CustomNode';
+import './styles/ScriptDetail.css';
 
 const { Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -161,9 +164,7 @@ export default function ScriptDetail() {
 
         flowNodes.push({
           id: node.id,
-          type: index === 0 && isFirstLayer ? 'input' :
-            index === nodeCount - 1 && isLastLayer ? 'output' :
-              'default',
+          type: 'custom',
           position: { x, y },
           sourcePosition: sourcePosition as any,
           targetPosition: targetPosition as any,
@@ -171,6 +172,10 @@ export default function ScriptDetail() {
             label: node.title,
             content: node.content,
             node: node,
+          },
+          style: {
+            width: 200,
+            height: 120,
           },
         });
 
@@ -210,6 +215,26 @@ export default function ScriptDetail() {
     setLayoutDirection(newDirection);
     // 重新转换节点位置，忽略已保存的位置，使用新的布局方向计算
     convertToFlowNodes(layers, true, newDirection);
+  };
+
+  // 一键整理：按照二叉树格式排列节点
+  const handleAutoLayout = () => {
+    try {
+      const updatedLayers = calculateNodePositions({
+        layers,
+        layoutDirection
+      });
+
+      if (updatedLayers) {
+        setLayers(updatedLayers);
+        // 这里必须传入 false，表示不忽略已保存的位置，使用上面计算出的 position_x/y
+        convertToFlowNodes(updatedLayers, false, layoutDirection);
+        Toast.success('节点整理完成');
+      }
+    } catch (error) {
+      Toast.error('整理失败');
+      console.error(error);
+    }
   };
 
   const onConnect = useCallback(
@@ -611,6 +636,14 @@ export default function ScriptDetail() {
           onClick={handleToggleLayoutDirection}
         />
       </Tooltip>
+      <Tooltip content="一键整理：按二叉树格式排列节点" position="bottom">
+        <Button
+          icon={<IconSort />}
+          theme="borderless"
+          size="large"
+          onClick={handleAutoLayout}
+        />
+      </Tooltip>
       <Tooltip content="重置" position="bottom">
         <Button
           icon={<IconRefresh />}
@@ -715,6 +748,9 @@ export default function ScriptDetail() {
               onPaneClick={() => {
                 // 点击画布时隐藏所有删除按钮
                 (window as any).selectedEdgeId = null;
+              }}
+              nodeTypes={{
+                custom: CustomNode as any,
               }}
               edgeTypes={{
                 custom: (props) => <CustomEdge {...props} onDelete={handleDeleteEdge} />,
