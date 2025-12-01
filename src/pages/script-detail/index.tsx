@@ -23,6 +23,9 @@ import {
   Form,
   Toast,
   Tree,
+  TextArea,
+  Card,
+  Input,
 } from '@douyinfe/semi-ui';
 import {
   IconSave,
@@ -33,8 +36,10 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconRotate,
+  IconPlay,
 } from '@douyinfe/semi-icons';
 import { getScriptById } from '../../services/scriptService';
+import { generateStoryNode } from '../../services/mockAIService';
 import { Script } from '../../types/script';
 import { Layer, StoryNode } from '../../types/layer';
 import { getLayersByScriptId, updateNodeContent, saveNodePositions } from '../../mock/data/layers';
@@ -64,6 +69,15 @@ export default function ScriptDetail() {
   const [addLayerModalVisible, setAddLayerModalVisible] = useState(false);
   const [layoutDirection, setLayoutDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const [highlightedNodeIds, setHighlightedNodeIds] = useState<Set<string>>(new Set());
+
+  // AI State
+  const [aiResult, setAiResult] = useState<string>('');
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Preview State
+  const [previewContent, setPreviewContent] = useState<string>('');
+  const [previewBranches, setPreviewBranches] = useState<{ label: string }[]>([]);
+
   const highlightedNodeIdsRef = useRef<Set<string>>(new Set());
   const selectedNodeRef = useRef<StoryNode | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
@@ -550,9 +564,6 @@ export default function ScriptDetail() {
         }
 
         // 如果连接的两个节点都在高亮集合中，该边也应该高亮并保持动画
-        // 注意：边的 source 和 target 必须都在 ancestors 集合中，
-        // 且对于向上溯源来说，应该是 target -> source 的查找路径上的边
-        // 但简单来说，只要边的两端都在高亮集合里，就认为是相关边
         const isHighlighted = highlightedNodeIds.has(edge.source) && highlightedNodeIds.has(edge.target);
 
         if (isHighlighted) {
@@ -598,6 +609,155 @@ export default function ScriptDetail() {
     handleDeleteNodeRef.current = handleDeleteNode;
     handleTraceAncestorsRef.current = handleTraceAncestors;
   }, [handleDeleteNode, handleTraceAncestors]);
+
+  // Parse AI result when it changes
+  useEffect(() => {
+    if (!aiResult) {
+      setPreviewContent('');
+      setPreviewBranches([]);
+      return;
+    }
+
+    const optionsMatch = aiResult.match(/<options>([\s\S]*?)<\/options>/);
+    let content = aiResult;
+    let branches: { label: string }[] = [];
+
+    if (optionsMatch) {
+      content = aiResult.replace(optionsMatch[0], '').trim();
+      const optionsText = optionsMatch[1];
+      branches = optionsText.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .map(line => ({
+          label: line.replace(/^\d+\.\s*/, '')
+        }));
+    }
+
+    setPreviewContent(content);
+    setPreviewBranches(branches);
+  }, [aiResult]);
+
+  // AI 生成处理
+  const handleGenerateAI = async () => {
+    setIsGenerating(true);
+    try {
+      setAiResult('');
+      const result = await generateStoryNode(currentNode?.content || '');
+      setAiResult(result);
+    } catch (error) {
+      Toast.error('生成失败');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleApplyAI = () => {
+    if (!currentNode || !id) return;
+
+    try {
+      const newContent = previewContent;
+      const newBranches = previewBranches;
+
+      const currentLayerIndex = layers.findIndex(l => l.nodes?.some(n => n.id === currentNode.id));
+      if (currentLayerIndex === -1) return;
+
+      const currentLayer = layers[currentLayerIndex];
+      let nextLayer = layers[currentLayerIndex + 1];
+      let updatedLayers = [...layers];
+
+      if (!nextLayer && newBranches.length > 0) {
+        const newLayerOrder = currentLayer.layer_order + 1;
+        const newLayerId = `layer-${Date.now()}-auto`;
+        nextLayer = {
+          id: newLayerId,
+          script_id: id,
+          layer_order: newLayerOrder,
+          title: `第${newLayerOrder}层`,
+          is_collapsed: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          nodes: [],
+        };
+        updatedLayers.push(nextLayer);
+      }
+
+      const createdNodes: StoryNode[] = [];
+      if (nextLayer) {
+        const startOrder = (nextLayer.nodes?.length || 0) + 1;
+        newBranches.forEach((branch, index) => {
+          const newNodeId = `node-${Date.now()}-${index}`;
+          const newNode: StoryNode = {
+            id: newNodeId,
+            layer_id: nextLayer!.id,
+            node_order: startOrder + index,
+            title: branch.label,
+            content: '',
+            duration: 30,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            branches: [],
+          };
+          createdNodes.push(newNode);
+        });
+
+        updatedLayers = updatedLayers.map(l => {
+          if (l.id === nextLayer.id) {
+            return {
+              ...l,
+              nodes: [...(l.nodes || []), ...createdNodes]
+            };
+          }
+          return l;
+        });
+      }
+
+      updatedLayers = updatedLayers.map(l => {
+        if (l.id === currentLayer.id) {
+          return {
+            ...l,
+            nodes: l.nodes?.map(n => {
+              if (n.id === currentNode.id) {
+                const existingBranches = n.branches || [];
+                const newBranchObjects = createdNodes.map((targetNode, index) => ({
+                  id: `branch-${Date.now()}-${index}`,
+                  from_node_id: n.id,
+                  to_node_id: targetNode.id,
+                  branch_label: newBranches[index].label,
+                  branch_type: 'default' as const,
+                  branch_order: existingBranches.length + 1 + index,
+                  created_at: new Date().toISOString(),
+                }));
+
+                const updatedNode = {
+                  ...n,
+                  content: newContent,
+                  branches: [...existingBranches, ...newBranchObjects]
+                };
+
+                setCurrentNode(updatedNode);
+                return updatedNode;
+              }
+              return n;
+            })
+          };
+        }
+        return l;
+      });
+
+      setLayers(updatedLayers);
+      convertToFlowNodes(updatedLayers);
+
+      if (formApi) {
+        formApi.setValue('content', newContent);
+      }
+
+      Toast.success('AI生成内容并应用成功');
+      setAiResult('');
+    } catch (error) {
+      console.error(error);
+      Toast.error('应用失败');
+    }
+  };
 
   // 更新节点内容
   const handleUpdateNodeContent = async (values: any) => {
@@ -777,8 +937,8 @@ export default function ScriptDetail() {
       // 创建新层
       const newLayer: Layer = {
         id: newLayerId,
-        script_id: id,
         layer_order: newLayerOrder,
+        script_id: id,
         title: values.title || `第${newLayerOrder}层`,
         description: values.description,
         is_collapsed: false,
@@ -978,9 +1138,10 @@ export default function ScriptDetail() {
         onCancel={() => {
           setEditModalVisible(false);
           setCurrentNode(null);
+          setAiResult('');
         }}
         onOk={() => formApi?.submitForm()}
-        width={700}
+        width={800}
       >
         <Form
           getFormApi={(api) => setFormApi(api)}
@@ -1007,6 +1168,67 @@ export default function ScriptDetail() {
           />
           {currentNode && (
             <div style={{ marginTop: 16 }}>
+              <div style={{ marginBottom: 16 }}>
+                <Button
+                  onClick={handleGenerateAI}
+                  loading={isGenerating}
+                  icon={<IconPlay />}
+                  theme='solid'
+                >
+                  {currentNode?.content ? '重新生成内容' : '生成内容'}
+                </Button>
+              </div>
+
+              {aiResult && (
+                <Card
+                  title="AI生成结果预览"
+                  style={{ marginBottom: 16, backgroundColor: 'var(--semi-color-fill-0)' }}
+                  footer={
+                    <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <Button
+                        onClick={handleGenerateAI}
+                        loading={isGenerating}
+                        icon={<IconRefresh />}
+                        type='tertiary'
+                      >
+                        重新生成
+                      </Button>
+                      <Button onClick={handleApplyAI} theme='solid' type='primary'>应用结果</Button>
+                    </Space>
+                  }
+                >
+                  <div style={{ marginBottom: 12 }}>
+                    <Text strong>剧情内容预览</Text>
+                    <TextArea
+                      value={previewContent}
+                      onChange={(val) => setPreviewContent(val)}
+                      autosize={{ minRows: 4, maxRows: 8 }}
+                      style={{ marginTop: 8 }}
+                    />
+                  </div>
+
+                  <div>
+                    <Text strong>生成分支预览 ({previewBranches.length})</Text>
+                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {previewBranches.map((branch, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Text type="secondary" style={{ width: 20 }}>{idx + 1}.</Text>
+                          <Input
+                            value={branch.label}
+                            onChange={(val) => {
+                              const newBranches = [...previewBranches];
+                              newBranches[idx].label = val;
+                              setPreviewBranches(newBranches);
+                            }}
+                            style={{ width: '100%' }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Card>
+              )}
+
               <Text type="secondary" size="small">
                 节点ID: {currentNode.id}
               </Text>
