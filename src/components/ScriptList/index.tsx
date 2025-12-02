@@ -71,7 +71,7 @@ export default function ScriptList({ onSelectScript, selectedScriptId }: ScriptL
     return (
       script.title.toLowerCase().includes(keyword) ||
       script.description?.toLowerCase().includes(keyword) ||
-      script.tags?.some(tag => tag.tag_name.toLowerCase().includes(keyword))
+      script.tags?.some(tag => tag.tagName.toLowerCase().includes(keyword))
     );
   });
 
@@ -173,7 +173,7 @@ export default function ScriptList({ onSelectScript, selectedScriptId }: ScriptL
   };
 
   // 获取标签颜色（将十六进制颜色转换为 Semi Design 支持的颜色或使用 style）
-  const getTagColor = (color?: string): 'grey' | 'red' | 'pink' | 'purple' | 'violet' | 'indigo' | 'blue' | 'light-blue' | 'cyan' | 'teal' | 'green' | 'light-green' | 'lime' | 'yellow' | 'amber' | 'orange' | 'white' | undefined => {
+  const getTagColor = (color?: string | null): 'grey' | 'red' | 'pink' | 'purple' | 'violet' | 'indigo' | 'blue' | 'light-blue' | 'cyan' | 'teal' | 'green' | 'light-green' | 'lime' | 'yellow' | 'amber' | 'orange' | 'white' | undefined => {
     if (!color) return 'grey';
 
     // Semi Design 支持的颜色列表
@@ -194,7 +194,7 @@ export default function ScriptList({ onSelectScript, selectedScriptId }: ScriptL
   };
 
   // 获取标签样式（如果是十六进制颜色，使用 style）
-  const getTagStyle = (color?: string): React.CSSProperties => {
+  const getTagStyle = (color?: string | null): React.CSSProperties => {
     if (!color || !color.startsWith('#')) {
       return { marginRight: 4 };
     }
@@ -317,13 +317,13 @@ export default function ScriptList({ onSelectScript, selectedScriptId }: ScriptL
                           size="small"
                           style={getTagStyle(tag.color)}
                         >
-                          {tag.tag_name}
+                          {tag.tagName}
                         </Tag>
                       ))}
                     </div>
                   )}
                   <Text type="tertiary" size="small" className="script-item-time">
-                    {new Date(script.updated_at).toLocaleDateString('zh-CN')}
+                    {new Date(script.updatedAt).toLocaleDateString('zh-CN')}
                   </Text>
                 </div>
               </List.Item>
@@ -422,7 +422,7 @@ export default function ScriptList({ onSelectScript, selectedScriptId }: ScriptL
           labelPosition="left"
           labelWidth={80}
           initValues={{
-            tags: currentScript?.tags?.map(t => t.tag_name).join(', '),
+            tags: currentScript?.tags?.map(t => t.tagName).join(', '),
           }}
         >
           <Form.Input
@@ -431,7 +431,7 @@ export default function ScriptList({ onSelectScript, selectedScriptId }: ScriptL
             placeholder="请输入标签，用逗号分隔"
           />
           <Text type="secondary" size="small">
-            当前标签：{currentScript?.tags?.map(t => t.tag_name).join(', ') || '无'}
+            当前标签：{currentScript?.tags?.map(t => t.tagName).join(', ') || '无'}
           </Text>
         </Form>
       </Modal>

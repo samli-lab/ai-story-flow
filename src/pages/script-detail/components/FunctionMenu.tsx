@@ -4,6 +4,7 @@ import {
   IconPlus,
   IconSort,
   IconGridStroked,
+  IconTicketCode,
 } from '@douyinfe/semi-icons';
 import { IconTree } from '@douyinfe/semi-icons-lab';
 
@@ -16,6 +17,8 @@ interface FunctionMenuProps {
   onAddNode: () => void;
   onAddLayer: () => void;
   onAutoLayout: (mode: 'tree' | 'compact') => void;
+  onGenerateInitialNode: () => void;
+  isGeneratingInitialNode?: boolean;
 }
 
 export default function FunctionMenu({
@@ -24,8 +27,18 @@ export default function FunctionMenu({
   onAddNode,
   onAddLayer,
   onAutoLayout,
+  onGenerateInitialNode,
+  isGeneratingInitialNode = false,
 }: FunctionMenuProps) {
   const menuItems = [
+    {
+      title: '生成初始节点',
+      description: isGeneratingInitialNode ? '正在生成...' : '基于剧本大纲AI生成初始节点',
+      icon: <IconTicketCode />,
+      action: onGenerateInitialNode,
+      color: '#f5222d',
+      disabled: isGeneratingInitialNode,
+    },
     {
       title: '添加层',
       description: '添加新的层',
@@ -115,14 +128,17 @@ export default function FunctionMenu({
                     padding: '12px',
                     marginBottom: '8px',
                     borderRadius: '8px',
-                    cursor: 'pointer',
+                    cursor: item.disabled ? 'not-allowed' : 'pointer',
                     transition: 'all 0.2s',
                     backgroundColor: 'var(--semi-color-bg-0)',
+                    opacity: item.disabled ? 0.6 : 1,
                   }}
-                  onClick={!item.isDropdown ? item.action : undefined}
+                  onClick={!item.isDropdown && !item.disabled ? item.action : undefined}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--semi-color-fill-0)';
-                    e.currentTarget.style.transform = 'translateX(4px)';
+                    if (!item.disabled) {
+                      e.currentTarget.style.backgroundColor = 'var(--semi-color-fill-0)';
+                      e.currentTarget.style.transform = 'translateX(4px)';
+                    }
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.backgroundColor = 'var(--semi-color-bg-0)';

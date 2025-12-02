@@ -120,8 +120,10 @@ export const calculateNodePositions = (
     layers.forEach((layer) => {
       layer.nodes?.forEach((node) => {
         node.branches?.forEach((branch) => {
-          const childId = branch.to_node_id;
-          if (nodeMap.has(childId)) {
+          // 支持两种字段名格式：to_node_id 和 toNodeId
+          const childId =
+            (branch as any).to_node_id ?? (branch as any).toNodeId;
+          if (childId && nodeMap.has(childId)) {
             edgesMap.get(node.id)?.push(childId);
             inDegreeMap.set(childId, (inDegreeMap.get(childId) || 0) + 1);
           }
@@ -136,7 +138,11 @@ export const calculateNodePositions = (
 
     // Fallback if no roots found
     if (roots.length === 0) {
-      const firstLayer = layers.find((l) => l.layer_order === 1);
+      // 支持两种字段名格式：layer_order 和 layerOrder
+      const firstLayer = layers.find((l) => {
+        const order = (l as any).layer_order ?? (l as any).layerOrder;
+        return order === 1;
+      });
       if (firstLayer && firstLayer.nodes && firstLayer.nodes.length > 0) {
         roots = [firstLayer.nodes[0].id];
       } else if (

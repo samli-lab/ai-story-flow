@@ -24,7 +24,6 @@ import { useNavigate } from 'react-router-dom';
 import { Script } from '../../types/script';
 import {
   getScripts,
-  createScript,
   deleteScript,
   renameScript,
   updateScriptTags,
@@ -39,7 +38,6 @@ export default function ScriptsPage() {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
-  const [createModalVisible, setCreateModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [tagModalVisible, setTagModalVisible] = useState(false);
   const [currentScript, setCurrentScript] = useState<Script | null>(null);
@@ -70,28 +68,13 @@ export default function ScriptsPage() {
     return (
       script.title.toLowerCase().includes(keyword) ||
       script.description?.toLowerCase().includes(keyword) ||
-      script.tags?.some(tag => tag.tag_name.toLowerCase().includes(keyword))
+      script.tags?.some(tag => tag.tagName.toLowerCase().includes(keyword))
     );
   });
 
-  // 创建剧本
-  const handleCreate = async (values: any) => {
-    try {
-      const newScript = await createScript({
-        title: values.title,
-        description: values.description,
-        outline: values.outline,
-        tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()) : [],
-      });
-      setScripts(prev => [newScript, ...prev]);
-      setCreateModalVisible(false);
-      Toast.success('创建成功');
-      // 创建后跳转到编辑页面
-      navigate(`/script/${newScript.id}`);
-    } catch (error) {
-      Toast.error('创建失败');
-      console.error(error);
-    }
+  // 跳转到创建剧本页面
+  const handleCreate = () => {
+    navigate('/scripts/create');
   };
 
   // 重命名剧本
@@ -167,7 +150,7 @@ export default function ScriptsPage() {
   };
 
   // 获取标签颜色（将十六进制颜色转换为 Semi Design 支持的颜色或使用 style）
-  const getTagColor = (color?: string): 'grey' | 'red' | 'pink' | 'purple' | 'violet' | 'indigo' | 'blue' | 'light-blue' | 'cyan' | 'teal' | 'green' | 'light-green' | 'lime' | 'yellow' | 'amber' | 'orange' | 'white' | undefined => {
+  const getTagColor = (color?: string | null): 'grey' | 'red' | 'pink' | 'purple' | 'violet' | 'indigo' | 'blue' | 'light-blue' | 'cyan' | 'teal' | 'green' | 'light-green' | 'lime' | 'yellow' | 'amber' | 'orange' | 'white' | undefined => {
     if (!color) return 'grey';
 
     // Semi Design 支持的颜色列表
@@ -188,7 +171,7 @@ export default function ScriptsPage() {
   };
 
   // 获取标签样式（如果是十六进制颜色，使用 style）
-  const getTagStyle = (color?: string): React.CSSProperties => {
+  const getTagStyle = (color?: string | null): React.CSSProperties => {
     if (!color || !color.startsWith('#')) {
       return { marginRight: 4 };
     }
@@ -214,7 +197,7 @@ export default function ScriptsPage() {
               icon={<IconPlus />}
               theme="solid"
               type="primary"
-              onClick={() => setCreateModalVisible(true)}
+              onClick={handleCreate}
             >
               新建剧本
             </Button>
@@ -323,13 +306,13 @@ export default function ScriptsPage() {
                                 size="small"
                                 style={getTagStyle(tag.color)}
                               >
-                                {tag.tag_name}
+                                {tag.tagName}
                               </Tag>
                             ))}
                           </div>
                         )}
                         <Text type="tertiary" size="small" className="script-card-time">
-                          更新于 {new Date(script.updated_at).toLocaleDateString('zh-CN')}
+                          更新于 {new Date(script.updatedAt).toLocaleDateString('zh-CN')}
                         </Text>
                       </div>
                     </Card>
@@ -340,46 +323,6 @@ export default function ScriptsPage() {
           </div>
         </div>
       </div>
-
-      {/* 创建剧本弹窗 */}
-      <Modal
-        title="新建剧本"
-        visible={createModalVisible}
-        onCancel={() => setCreateModalVisible(false)}
-        onOk={() => formApi?.submitForm()}
-        width={600}
-      >
-        <Form
-          getFormApi={(api) => setFormApi(api)}
-          onSubmit={handleCreate}
-          labelPosition="left"
-          labelWidth={80}
-        >
-          <Form.Input
-            field="title"
-            label="标题"
-            placeholder="请输入剧本标题"
-            rules={[{ required: true, message: '请输入剧本标题' }]}
-          />
-          <Form.TextArea
-            field="description"
-            label="描述"
-            placeholder="请输入剧本描述（可选）"
-            autosize={{ minRows: 3 }}
-          />
-          <Form.TextArea
-            field="outline"
-            label="大纲"
-            placeholder="请输入故事大纲（可选）"
-            autosize={{ minRows: 4 }}
-          />
-          <Form.Input
-            field="tags"
-            label="标签"
-            placeholder="请输入标签，用逗号分隔（可选）"
-          />
-        </Form>
-      </Modal>
 
       {/* 重命名弹窗 */}
       <Modal
@@ -431,7 +374,7 @@ export default function ScriptsPage() {
           labelPosition="left"
           labelWidth={80}
           initValues={{
-            tags: currentScript?.tags?.map(t => t.tag_name).join(', '),
+            tags: currentScript?.tags?.map(t => t.tagName).join(', '),
           }}
         >
           <Form.Input
@@ -440,7 +383,7 @@ export default function ScriptsPage() {
             placeholder="请输入标签，用逗号分隔"
           />
           <Text type="secondary" size="small">
-            当前标签：{currentScript?.tags?.map(t => t.tag_name).join(', ') || '无'}
+            当前标签：{currentScript?.tags?.map(t => t.tagName).join(', ') || '无'}
           </Text>
         </Form>
       </Modal>

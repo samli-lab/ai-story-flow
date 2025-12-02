@@ -37,12 +37,16 @@ import {
   IconChevronRight,
   IconRotate,
   IconPlay,
+  IconTicketCode,
 } from '@douyinfe/semi-icons';
 import { getScriptById } from '../../services/scriptService';
 import { generateStoryNode } from '../../services/mockAIService';
+import { generateInitialNode } from '../../services/nodeAIService';
+import { getLayers, createLayer } from '../../services/layerService';
+import { createNode, updateNode, deleteNode, batchUpdateNodePositions } from '../../services/nodeService';
+import { createBranch, deleteBranch } from '../../services/branchService';
 import { Script } from '../../types/script';
 import { Layer, StoryNode } from '../../types/layer';
-import { getLayersByScriptId, updateNodeContent, saveNodePositions } from '../../mock/data/layers';
 import AppLayout from '../../components/AppLayout';
 import { calculateNodePositions } from './utils/layoutUtils';
 import FunctionMenu from './components/FunctionMenu';
@@ -58,6 +62,7 @@ export default function ScriptDetail() {
   const navigate = useNavigate();
   const [script, setScript] = useState<Script | null>(null);
   const [layers, setLayers] = useState<Layer[]>([]);
+  const [isLoadingLayers, setIsLoadingLayers] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -73,6 +78,8 @@ export default function ScriptDetail() {
   // AI State
   const [aiResult, setAiResult] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingInitialNode, setIsGeneratingInitialNode] = useState(false);
+  const [isUpdatingNode, setIsUpdatingNode] = useState(false);
 
   // Preview State
   const [previewContent, setPreviewContent] = useState<string>('');
@@ -80,7 +87,7 @@ export default function ScriptDetail() {
 
   const highlightedNodeIdsRef = useRef<Set<string>>(new Set());
   const selectedNodeRef = useRef<StoryNode | null>(null);
-  const saveTimeoutRef = useRef<number | null>(null);
+  // const saveTimeoutRef = useRef<number | null>(null); // 自动保存已禁用
 
   // 使用 ref 来解决闭包陷阱，确保 onData 中的回调始终是最新的
   const handleDeleteNodeRef = useRef<(nodeId: string) => void>(() => { });
@@ -97,26 +104,26 @@ export default function ScriptDetail() {
     }
   }, [id]);
 
-  // 监听节点位置变化，自动保存（防抖）
-  useEffect(() => {
-    if (nodes.length === 0 || layers.length === 0) return;
+  // 监听节点位置变化，自动保存（防抖）- 已禁用
+  // useEffect(() => {
+  //   if (nodes.length === 0 || layers.length === 0) return;
 
-    // 清除之前的定时器
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
+  //   // 清除之前的定时器
+  //   if (saveTimeoutRef.current) {
+  //     clearTimeout(saveTimeoutRef.current);
+  //   }
 
-    // 设置新的定时器，2秒后自动保存
-    saveTimeoutRef.current = window.setTimeout(() => {
-      handleAutoSave();
-    }, 2000);
+  //   // 设置新的定时器，2秒后自动保存
+  //   saveTimeoutRef.current = window.setTimeout(() => {
+  //     handleAutoSave();
+  //   }, 2000);
 
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-    };
-  }, [nodes]); // 当 nodes 变化时触发
+  //   return () => {
+  //     if (saveTimeoutRef.current) {
+  //       clearTimeout(saveTimeoutRef.current);
+  //     }
+  //   };
+  // }, [nodes]); // 当 nodes 变化时触发
 
   // 处理节点单击：更新选中的节点引用
   const handleNodeClick = useCallback((_event: any, node: FlowNode) => {
@@ -152,12 +159,16 @@ export default function ScriptDetail() {
 
   const loadLayers = async () => {
     if (!id) return;
+    setIsLoadingLayers(true);
     try {
-      const layersData = await getLayersByScriptId(id);
+      const layersData = await getLayers(id);
       setLayers(layersData);
       convertToFlowNodes(layersData);
     } catch (error) {
       console.error('加载层数据失败', error);
+      Toast.error('加载层数据失败');
+    } finally {
+      setIsLoadingLayers(false);
     }
   };
 
@@ -169,30 +180,54 @@ export default function ScriptDetail() {
 
     layersData.forEach((layer) => {
       const nodeCount = layer.nodes?.length || 0;
-      const isFirstLayer = layer.layer_order === 1;
-      const isLastLayer = layer.layer_order === layersData.length;
+      // 支持两种字段名格式：layer_order 和 layerOrder
+      const layerOrder = (layer as any).layer_order ?? (layer as any).layerOrder ?? 1;
+      const isFirstLayer = layerOrder === 1;
+      const isLastLayer = layerOrder === layersData.length;
 
       layer.nodes?.forEach((node, index) => {
         // 根据布局方向计算默认位置
         let x: number, y: number;
+        // 支持两种字段名格式：layer_order 和 layerOrder
+        const layerOrder = (layer as any).layer_order ?? (layer as any).layerOrder ?? 1;
+
+        // 支持两种字段名格式：position_x/position_y 和 positionX/positionY
+        const positionX = (node as any).position_x ?? (node as any).positionX;
+        const positionY = (node as any).position_y ?? (node as any).positionY;
 
         if (currentDirection === 'horizontal') {
           // 水平布局：从左到右
-          x = (!ignoreSavedPositions && node.position_x !== undefined && node.position_x !== null)
-            ? node.position_x
-            : layer.layer_order * 400; // 层之间的水平间距
-          y = (!ignoreSavedPositions && node.position_y !== undefined && node.position_y !== null)
-            ? node.position_y
-            : 100 + (index - (nodeCount - 1) / 2) * 120; // 垂直居中分布
+          if (!ignoreSavedPositions && positionX !== undefined && positionX !== null && !isNaN(positionX)) {
+            x = positionX;
+          } else {
+            x = layerOrder * 400; // 层之间的水平间距
+          }
+
+          if (!ignoreSavedPositions && positionY !== undefined && positionY !== null && !isNaN(positionY)) {
+            y = positionY;
+          } else {
+            const centerOffset = nodeCount > 0 ? (index - (nodeCount - 1) / 2) * 120 : 0;
+            y = 100 + centerOffset; // 垂直居中分布
+          }
         } else {
           // 垂直布局：从上到下
-          x = (!ignoreSavedPositions && node.position_x !== undefined && node.position_x !== null)
-            ? node.position_x
-            : 100 + (index - (nodeCount - 1) / 2) * 200; // 水平居中分布
-          y = (!ignoreSavedPositions && node.position_y !== undefined && node.position_y !== null)
-            ? node.position_y
-            : layer.layer_order * 200; // 层之间的垂直间距
+          if (!ignoreSavedPositions && positionX !== undefined && positionX !== null && !isNaN(positionX)) {
+            x = positionX;
+          } else {
+            const centerOffset = nodeCount > 0 ? (index - (nodeCount - 1) / 2) * 200 : 0;
+            x = 100 + centerOffset; // 水平居中分布
+          }
+
+          if (!ignoreSavedPositions && positionY !== undefined && positionY !== null && !isNaN(positionY)) {
+            y = positionY;
+          } else {
+            y = layerOrder * 200; // 层之间的垂直间距
+          }
         }
+
+        // 确保 x 和 y 是有效数字
+        if (isNaN(x) || !isFinite(x)) x = 100;
+        if (isNaN(y) || !isFinite(y)) y = 100;
 
         // 设置连接点位置
         let sourcePosition: string | undefined;
@@ -230,11 +265,21 @@ export default function ScriptDetail() {
 
         // 添加分支连接（带动画和样式）
         node.branches?.forEach((branch) => {
+          // 支持两种字段名格式：from_node_id/to_node_id 和 fromNodeId/toNodeId
+          const fromNodeId = (branch as any).from_node_id ?? (branch as any).fromNodeId;
+          const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+          const branchLabel = (branch as any).branch_label ?? (branch as any).branchLabel ?? '';
+
+          if (!fromNodeId || !toNodeId) {
+            console.warn('分支缺少必要的节点ID:', branch);
+            return;
+          }
+
           flowEdges.push({
             id: branch.id,
-            source: branch.from_node_id,
-            target: branch.to_node_id,
-            label: branch.branch_label || '',
+            source: fromNodeId,
+            target: toNodeId,
+            label: branchLabel,
             type: 'custom', // 使用自定义类型
             animated: true, // 启用动画
             style: {
@@ -288,123 +333,207 @@ export default function ScriptDetail() {
   };
 
   const onConnect = useCallback(
-    (params: Connection) => {
-      if (!params.source || !params.target) return;
+    async (params: Connection) => {
+      if (!params.source || !params.target || !id) return;
 
-      // 创建新的分支
-      const newBranchId = `branch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const newEdge: Edge = {
-        id: newBranchId,
-        source: params.source,
-        target: params.target,
-        label: '连接',
-        type: 'custom', // 使用自定义类型
-        animated: true,
-        style: {
-          strokeWidth: 3,
-          stroke: '#1890ff',
-        },
-        labelStyle: {
-          fill: '#1890ff',
-          fontWeight: 600,
-        },
-        labelBgStyle: {
-          fill: '#fff',
-          fillOpacity: 0.8,
-        },
-      };
+      try {
+        // 找到源节点的分支数量，用于计算 branch_order
+        const sourceNode = layers
+          .flatMap(l => l.nodes || [])
+          .find(n => n.id === params.source);
+        const existingBranchesCount = sourceNode?.branches?.length || 0;
 
-      // 更新 edges
-      setEdges((eds) => addEdge(newEdge, eds));
+        // 调用 API 创建分支
+        const newBranch = await createBranch(id, {
+          from_node_id: params.source,
+          to_node_id: params.target,
+          branch_label: '连接',
+          branch_type: 'default',
+          branch_order: existingBranchesCount + 1,
+        });
 
-      // 更新 layers 中的分支数据
-      const updatedLayers = layers.map(layer => ({
-        ...layer,
-        nodes: layer.nodes?.map(node => {
-          if (node.id === params.source) {
-            const existingBranches = node.branches || [];
-            const newBranch = {
-              id: newBranchId,
-              from_node_id: params.source!,
-              to_node_id: params.target!,
-              branch_label: '连接',
-              branch_type: 'default' as const,
-              branch_order: existingBranches.length + 1,
-              created_at: new Date().toISOString(),
-            };
-            return {
-              ...node,
-              branches: [...existingBranches, newBranch],
-            };
-          }
-          return node;
-        }),
-      }));
+        // 创建新的边
+        // 支持两种字段名格式：branch_label 和 branchLabel
+        const branchLabel = (newBranch as any).branch_label ?? (newBranch as any).branchLabel ?? '连接';
+        const newEdge: Edge = {
+          id: newBranch.id,
+          source: params.source,
+          target: params.target,
+          label: branchLabel,
+          type: 'custom',
+          animated: true,
+          style: {
+            strokeWidth: 3,
+            stroke: '#1890ff',
+          },
+          labelStyle: {
+            fill: '#1890ff',
+            fontWeight: 600,
+          },
+          labelBgStyle: {
+            fill: '#fff',
+            fillOpacity: 0.8,
+          },
+        };
 
-      setLayers(updatedLayers);
-      Toast.success('连接创建成功');
+        // 更新 edges
+        setEdges((eds) => addEdge(newEdge, eds));
+
+        // 更新 layers 中的分支数据
+        const updatedLayers = layers.map(layer => ({
+          ...layer,
+          nodes: layer.nodes?.map(node => {
+            if (node.id === params.source) {
+              const existingBranches = node.branches || [];
+              return {
+                ...node,
+                branches: [...existingBranches, newBranch],
+              };
+            }
+            return node;
+          }),
+        }));
+
+        setLayers(updatedLayers);
+        Toast.success('连接创建成功');
+      } catch (error) {
+        Toast.error('创建连接失败');
+        console.error(error);
+      }
     },
-    [setEdges, layers]
+    [id, setEdges, layers]
   );
 
-  // 自动保存节点位置（静默保存，不显示提示）
-  const handleAutoSave = useCallback(async () => {
-    if (!id || nodes.length === 0 || layers.length === 0) return;
+  // 自动保存节点位置（静默保存，不显示提示）- 已禁用
+  // const handleAutoSave = useCallback(async () => {
+  //   if (!id || nodes.length === 0 || layers.length === 0) return;
 
-    try {
-      // 更新所有节点的位置信息
-      const updatedLayers = layers.map(layer => ({
-        ...layer,
-        nodes: layer.nodes?.map(node => {
-          const flowNode = nodes.find((n: FlowNode) => n.id === node.id);
-          if (flowNode) {
-            return {
-              ...node,
-              position_x: flowNode.position.x,
-              position_y: flowNode.position.y,
-              updated_at: new Date().toISOString(),
-            };
-          }
-          return node;
-        }),
-        updated_at: new Date().toISOString(),
-      }));
+  //   try {
+  //     // 收集所有需要更新位置的节点
+  //     const positionsToUpdate = nodes
+  //       .map(flowNode => {
+  //         const node = layers
+  //           .flatMap(l => l.nodes || [])
+  //           .find(n => n.id === flowNode.id);
 
-      // 保存到 mock 服务（实际应该调用 API）
-      await saveNodePositions(id, updatedLayers);
+  //         const x = flowNode.position?.x;
+  //         const y = flowNode.position?.y;
 
-      setLayers(updatedLayers);
-      // 静默保存，不显示提示
-    } catch (error) {
-      console.error('自动保存失败', error);
-    }
-  }, [id, nodes, layers]);
+  //         // 确保位置值是有效的数字
+  //         if (x === null || x === undefined || y === null || y === undefined ||
+  //           typeof x !== 'number' || typeof y !== 'number' ||
+  //           isNaN(x) || isNaN(y)) {
+  //           return null;
+  //         }
+
+  //         // 只更新位置有变化的节点
+  //         if (node && (
+  //           node.position_x !== x ||
+  //           node.position_y !== y
+  //         )) {
+  //           return {
+  //             node_id: flowNode.id,
+  //             position_x: x,
+  //             position_y: y,
+  //           };
+  //         }
+  //         return null;
+  //       })
+  //       .filter((item): item is { node_id: string; position_x: number; position_y: number } => item !== null);
+
+  //     if (positionsToUpdate.length === 0) return;
+
+  //     // 调用批量更新位置 API
+  //     await batchUpdateNodePositions(id, positionsToUpdate);
+
+  //     // 更新本地状态
+  //     const updatedLayers = layers.map(layer => ({
+  //       ...layer,
+  //       nodes: layer.nodes?.map(node => {
+  //         const flowNode = nodes.find((n: FlowNode) => n.id === node.id);
+  //         if (flowNode) {
+  //           const x = flowNode.position?.x;
+  //           const y = flowNode.position?.y;
+
+  //           // 只更新有效的位置值
+  //           if (x !== null && x !== undefined && y !== null && y !== undefined &&
+  //             typeof x === 'number' && typeof y === 'number' &&
+  //             !isNaN(x) && !isNaN(y)) {
+  //             return {
+  //               ...node,
+  //               position_x: x,
+  //               position_y: y,
+  //               updated_at: new Date().toISOString(),
+  //             };
+  //           }
+  //         }
+  //         return node;
+  //       }),
+  //       updated_at: new Date().toISOString(),
+  //     }));
+
+  //     setLayers(updatedLayers);
+  //     // 静默保存，不显示提示
+  //   } catch (error) {
+  //     console.error('自动保存失败', error);
+  //   }
+  // }, [id, nodes, layers]);
 
   // 手动保存节点位置和所有数据
   const handleSave = async () => {
     if (!id) return;
 
     try {
-      // 更新所有节点的位置信息
+      // 收集所有需要更新位置的节点，过滤掉无效的位置值
+      const positionsToUpdate = nodes
+        .map(flowNode => {
+          const x = flowNode.position?.x;
+          const y = flowNode.position?.y;
+
+          // 确保位置值是有效的数字
+          if (x !== null && x !== undefined && y !== null && y !== undefined &&
+            typeof x === 'number' && typeof y === 'number' &&
+            !isNaN(x) && !isNaN(y)) {
+            return {
+              node_id: flowNode.id,
+              position_x: x,
+              position_y: y,
+            };
+          }
+          return null;
+        })
+        .filter((item): item is { node_id: string; position_x: number; position_y: number } => item !== null);
+
+      if (positionsToUpdate.length > 0) {
+        // 调用批量更新位置 API
+        await batchUpdateNodePositions(id, positionsToUpdate);
+      }
+
+      // 更新本地状态
       const updatedLayers = layers.map(layer => ({
         ...layer,
         nodes: layer.nodes?.map(node => {
           const flowNode = nodes.find((n: FlowNode) => n.id === node.id);
           if (flowNode) {
-            return {
-              ...node,
-              position_x: flowNode.position.x,
-              position_y: flowNode.position.y,
-              updated_at: new Date().toISOString(),
-            };
+            const x = flowNode.position?.x;
+            const y = flowNode.position?.y;
+
+            // 只更新有效的位置值
+            if (x !== null && x !== undefined && y !== null && y !== undefined &&
+              typeof x === 'number' && typeof y === 'number' &&
+              !isNaN(x) && !isNaN(y)) {
+              return {
+                ...node,
+                position_x: x,
+                position_y: y,
+                updated_at: new Date().toISOString(),
+              };
+            }
           }
           return node;
         }),
         updated_at: new Date().toISOString(),
       }));
-
-      // 保存到 mock 服务（实际应该调用 API）
-      await saveNodePositions(id, updatedLayers);
 
       setLayers(updatedLayers);
       Toast.success('保存成功');
@@ -433,36 +562,49 @@ export default function ScriptDetail() {
 
   // 处理连接线删除
   const handleDeleteEdge = useCallback(
-    (edgeId: string) => {
-      // 从 edges 中删除
-      setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+    async (edgeId: string) => {
+      if (!id) return;
 
-      // 从 layers 中删除对应的分支
-      const updatedLayers = layers.map(layer => ({
-        ...layer,
-        nodes: layer.nodes?.map(node => {
-          if (node.branches) {
-            return {
-              ...node,
-              branches: node.branches.filter(branch => branch.id !== edgeId),
-            };
-          }
-          return node;
-        }),
-      }));
+      try {
+        // 调用 API 删除分支
+        await deleteBranch(id, edgeId);
 
-      setLayers(updatedLayers);
-      Toast.success('连接线已删除');
+        // 从 edges 中删除
+        setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+
+        // 从 layers 中删除对应的分支
+        const updatedLayers = layers.map(layer => ({
+          ...layer,
+          nodes: layer.nodes?.map(node => {
+            if (node.branches) {
+              return {
+                ...node,
+                branches: node.branches.filter(branch => branch.id !== edgeId),
+              };
+            }
+            return node;
+          }),
+        }));
+
+        setLayers(updatedLayers);
+        Toast.success('连接线已删除');
+      } catch (error) {
+        Toast.error('删除连接线失败');
+        console.error(error);
+      }
     },
-    [setEdges, layers]
+    [id, setEdges, layers]
   );
 
   // 处理节点删除
   const handleDeleteNode = useCallback(
-    (nodeId: string) => {
+    async (nodeId: string) => {
       if (!id) return;
 
       try {
+        // 调用 API 删除节点（会自动删除相关分支）
+        const result = await deleteNode(id, nodeId);
+
         // 从 edges 中删除所有与该节点相关的连接
         setEdges((eds) => eds.filter(
           (e) => e.source !== nodeId && e.target !== nodeId
@@ -478,7 +620,10 @@ export default function ScriptDetail() {
             // 删除指向该节点的分支
             if (node.branches) {
               node.branches = node.branches.filter(
-                branch => branch.to_node_id !== nodeId
+                branch => {
+                  const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+                  return toNodeId !== nodeId;
+                }
               );
             }
             return true;
@@ -491,7 +636,7 @@ export default function ScriptDetail() {
         // 重新转换节点（移除已删除的节点）
         convertToFlowNodes(updatedLayers);
 
-        Toast.success('节点已删除');
+        Toast.success(`节点已删除${result.deleted_branches_count > 0 ? `（已删除 ${result.deleted_branches_count} 个分支）` : ''}`);
       } catch (error) {
         Toast.error('删除节点失败');
         console.error(error);
@@ -666,7 +811,9 @@ export default function ScriptDetail() {
       let updatedLayers = [...layers];
 
       if (!nextLayer && newBranches.length > 0) {
-        const newLayerOrder = currentLayer.layer_order + 1;
+        // 支持两种字段名格式：layer_order 和 layerOrder
+        const currentLayerOrder = (currentLayer as any).layer_order ?? (currentLayer as any).layerOrder ?? 1;
+        const newLayerOrder = currentLayerOrder + 1;
         const newLayerId = `layer-${Date.now()}-auto`;
         nextLayer = {
           id: newLayerId,
@@ -761,41 +908,47 @@ export default function ScriptDetail() {
 
   // 更新节点内容
   const handleUpdateNodeContent = async (values: any) => {
-    if (!currentNode || !id) return;
+    // 防止重复提交
+    if (isUpdatingNode || !currentNode || !id) return;
+
+    setIsUpdatingNode(true);
     try {
-      const updated = await updateNodeContent(currentNode.id, values.content, layers, values.title);
-      if (updated) {
-        // 更新 layers 状态
-        const updatedLayers = layers.map(layer => ({
-          ...layer,
-          nodes: layer.nodes?.map(n => n.id === updated.id ? updated : n),
-        }));
-        setLayers(updatedLayers);
+      // 调用 API 更新节点
+      const updated = await updateNode(id, currentNode.id, {
+        title: values.title,
+        content: values.content,
+        change_reason: 'edit',
+      });
 
-        // 更新 ReactFlow 节点
-        setNodes(prevNodes =>
-          prevNodes.map(n => {
-            if (n.id === updated.id) {
-              return {
-                ...n,
-                data: {
-                  ...(n.data || {}),
-                  label: updated.title,
-                  content: updated.content,
-                  node: updated
-                }
-              };
-            }
-            return n;
-          })
-        );
+      // 重新加载层数据以获取最新状态
+      await loadLayers();
 
-        setEditModalVisible(false);
-        Toast.success('更新成功');
-      }
+      // 更新 ReactFlow 节点
+      setNodes(prevNodes =>
+        prevNodes.map(n => {
+          if (n.id === updated.id) {
+            return {
+              ...n,
+              data: {
+                ...(n.data || {}),
+                label: updated.title,
+                content: updated.content,
+                node: updated
+              }
+            };
+          }
+          return n;
+        })
+      );
+
+      setEditModalVisible(false);
+      setCurrentNode(updated);
+      Toast.success('更新成功');
     } catch (error) {
       Toast.error('更新失败');
       console.error(error);
+    } finally {
+      setIsUpdatingNode(false);
     }
   };
 
@@ -861,7 +1014,7 @@ export default function ScriptDetail() {
   };
 
   // 添加节点的处理函数
-  const handleAddNode = (values: any) => {
+  const handleAddNode = async (values: any) => {
     if (!id) return;
 
     try {
@@ -872,17 +1025,8 @@ export default function ScriptDetail() {
         return;
       }
 
-      // 生成新的节点ID
-      const newNodeId = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-      // 计算节点顺序（当前层的节点数量 + 1）
-      const nodeOrder = (targetLayer.nodes?.length || 0) + 1;
-
-      // 创建新节点
-      const newNode: StoryNode = {
-        id: newNodeId,
-        layer_id: values.layerId,
-        node_order: nodeOrder,
+      // 调用 API 创建节点
+      await createNode(id, values.layerId, {
         title: values.title,
         content: values.content,
         duration: values.duration || 30,
@@ -891,27 +1035,11 @@ export default function ScriptDetail() {
           characters: [],
           scene: targetLayer.title,
         },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        branches: [], // 新节点初始没有分支
-      };
-
-      // 更新 layers 状态
-      const updatedLayers = layers.map(layer => {
-        if (layer.id === values.layerId) {
-          return {
-            ...layer,
-            nodes: [...(layer.nodes || []), newNode],
-            updated_at: new Date().toISOString(),
-          };
-        }
-        return layer;
+        // node_order 不传，后端会自动计算
       });
 
-      setLayers(updatedLayers);
-
-      // 重新转换并更新 ReactFlow 节点
-      convertToFlowNodes(updatedLayers);
+      // 重新加载层数据
+      await loadLayers();
 
       Toast.success('节点添加成功');
     } catch (error) {
@@ -921,44 +1049,213 @@ export default function ScriptDetail() {
   };
 
   // 添加层的处理函数
-  const handleAddLayer = (values: any) => {
+  const handleAddLayer = async (values: any) => {
     if (!id) return;
 
     try {
-      // 计算新的层顺序（当前最大层顺序 + 1）
-      const maxLayerOrder = layers.length > 0
-        ? Math.max(...layers.map(l => l.layer_order))
-        : 0;
-      const newLayerOrder = maxLayerOrder + 1;
-
-      // 生成新的层ID
-      const newLayerId = `layer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-      // 创建新层
-      const newLayer: Layer = {
-        id: newLayerId,
-        layer_order: newLayerOrder,
-        script_id: id,
-        title: values.title || `第${newLayerOrder}层`,
+      await createLayer(id, {
+        title: values.title,
         description: values.description,
-        is_collapsed: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        nodes: [], // 新层初始没有节点
-      };
+        // layer_order 不传，后端会自动计算
+      });
 
-      // 更新 layers 状态
-      const updatedLayers = [...layers, newLayer].sort((a, b) => a.layer_order - b.layer_order);
-      setLayers(updatedLayers);
-
-      // 重新转换并更新 ReactFlow 节点
-      convertToFlowNodes(updatedLayers);
+      // 重新加载层数据
+      await loadLayers();
 
       setAddLayerModalVisible(false);
       Toast.success('层添加成功');
     } catch (error) {
       Toast.error('添加层失败');
       console.error(error);
+    }
+  };
+
+  // 生成初始节点
+  const handleGenerateInitialNode = async () => {
+    // 防止重复点击
+    if (isGeneratingInitialNode) {
+      return;
+    }
+
+    if (!id || !script) {
+      Toast.warning('请先加载剧本信息');
+      return;
+    }
+
+    if (!script.outline || script.outline.trim().length === 0) {
+      Toast.warning('请先填写剧本大纲');
+      return;
+    }
+
+    // 配置：最大重试次数（格式错误时自动重新生成）
+    const MAX_RETRY_COUNT = 3;
+
+    setIsGeneratingInitialNode(true);
+    try {
+      // 确保第一层存在，如果不存在则自动创建
+      let firstLayer = layers.find(l => {
+        const order = (l as any).layer_order ?? (l as any).layerOrder;
+        return order === 1;
+      });
+      if (!firstLayer) {
+        // 自动创建第一层
+        firstLayer = await createLayer(id, {
+          title: '第1层',
+          description: '初始层',
+          layer_order: 1,
+        });
+        // 更新本地 layers 状态
+        setLayers([...layers, { ...firstLayer, nodes: [] }]);
+      }
+
+      // 重试逻辑：如果选项提取失败，自动重新生成
+      let generatedContent = '';
+      let options: string[] = [];
+      let rawContent = '';
+      let retryCount = 0;
+      let isValidFormat = false;
+
+      while (retryCount < MAX_RETRY_COUNT && !isValidFormat) {
+        try {
+          const result = await generateInitialNode(script.outline);
+          generatedContent = result.content;
+          options = result.options;
+          rawContent = result.rawContent;
+
+          // 检查格式是否正确：应该至少提取到2个选项
+          if (options && options.length >= 2) {
+            isValidFormat = true;
+          } else {
+            retryCount++;
+            if (retryCount < MAX_RETRY_COUNT) {
+              Toast.warning(`选项格式不正确，正在重新生成... (${retryCount}/${MAX_RETRY_COUNT})`);
+              // 等待一下再重试，避免请求过快
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+        } catch (error) {
+          retryCount++;
+          if (retryCount >= MAX_RETRY_COUNT) {
+            throw error;
+          }
+          Toast.warning(`生成失败，正在重试... (${retryCount}/${MAX_RETRY_COUNT})`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      // 如果重试后仍然格式不正确，抛出错误
+      if (!isValidFormat) {
+        throw new Error(`经过 ${MAX_RETRY_COUNT} 次重试后，仍无法提取到有效的选项格式。请检查 AI API 返回格式。`);
+      }
+
+      // 计算初始节点的位置（第一层，第一个节点）
+      const firstLayerOrder = (firstLayer as any).layer_order ?? (firstLayer as any).layerOrder ?? 1;
+      const initialPositionX = layoutDirection === 'horizontal'
+        ? firstLayerOrder * 400
+        : 100;
+      const initialPositionY = layoutDirection === 'horizontal'
+        ? 100
+        : firstLayerOrder * 200;
+
+      // 创建初始节点（带位置和原始 AI 内容）
+      const initialNode = await createNode(id, firstLayer.id, {
+        title: '初始节点',
+        content: generatedContent,
+        duration: 30,
+        position_x: initialPositionX,
+        position_y: initialPositionY,
+        metadata: {
+          aiRawContent: rawContent, // 保存 AI 返回的原始内容到 metadata
+        },
+        // node_order 不传，后端会自动计算
+      });
+
+      // 收集需要保存位置的节点
+      const nodesToUpdatePositions: Array<{ node_id: string; position_x: number; position_y: number }> = [
+        {
+          node_id: initialNode.id,
+          position_x: initialPositionX,
+          position_y: initialPositionY,
+        },
+      ];
+
+      // 如果有选项，创建第二层和子节点
+      if (options && options.length > 0) {
+        // 确保第二层存在
+        let secondLayer = layers.find(l => {
+          const order = (l as any).layer_order ?? (l as any).layerOrder;
+          return order === 2;
+        });
+        if (!secondLayer) {
+          secondLayer = await createLayer(id, {
+            title: '第2层',
+            description: '分支层',
+            layer_order: 2,
+          });
+          // 重新加载 layers 以确保获取到最新数据
+          const updatedLayers = await getLayers(id);
+          setLayers(updatedLayers);
+          secondLayer = updatedLayers.find(l => {
+            const order = (l as any).layer_order ?? (l as any).layerOrder;
+            return order === 2;
+          }) || secondLayer;
+        }
+
+        // 为每个选项创建子节点
+        const createdNodes = [];
+        for (let index = 0; index < options.length; index++) {
+          const optionLabel = options[index];
+
+          // 计算子节点位置
+          const secondLayerOrder = (secondLayer as any).layer_order ?? (secondLayer as any).layerOrder ?? 2;
+          const childPositionX = layoutDirection === 'horizontal'
+            ? secondLayerOrder * 400
+            : 100 + (index - (options.length - 1) / 2) * 200;
+          const childPositionY = layoutDirection === 'horizontal'
+            ? 100 + (index - (options.length - 1) / 2) * 120
+            : secondLayerOrder * 200;
+
+          const childNode = await createNode(id, secondLayer.id, {
+            title: optionLabel,
+            content: '',
+            duration: 30,
+            position_x: childPositionX,
+            position_y: childPositionY,
+          });
+          createdNodes.push(childNode);
+
+          // 添加到位置更新列表
+          nodesToUpdatePositions.push({
+            node_id: childNode.id,
+            position_x: childPositionX,
+            position_y: childPositionY,
+          });
+
+          // 创建分支连接，确保 branch_order 正确（从 1 开始）
+          await createBranch(id, {
+            from_node_id: initialNode.id,
+            to_node_id: childNode.id,
+            branch_label: optionLabel,
+            branch_type: 'default',
+            branch_order: index + 1, // 明确设置顺序，从 1 开始
+          });
+        }
+      }
+
+      // 批量保存所有节点的位置（确保位置被正确保存）
+      if (nodesToUpdatePositions.length > 0) {
+        await batchUpdateNodePositions(id, nodesToUpdatePositions);
+      }
+
+      // 重新加载层数据以更新 UI
+      await loadLayers();
+
+      Toast.success(`初始节点生成成功${options && options.length > 0 ? `，已创建 ${options.length} 个子节点` : ''}`);
+    } catch (error) {
+      Toast.error(error instanceof Error ? error.message : '生成初始节点失败');
+      console.error('生成初始节点失败:', error);
+    } finally {
+      setIsGeneratingInitialNode(false);
     }
   };
 
@@ -1055,8 +1352,10 @@ export default function ScriptDetail() {
                 defaultExpandAll
                 style={{ fontSize: 14 }}
               />
-            ) : (
+            ) : isLoadingLayers ? (
               <Text type="tertiary">加载中...</Text>
+            ) : (
+              <Text type="tertiary">暂无层数据，请点击右侧菜单创建</Text>
             )}
           </div>
         </Sider>
@@ -1128,6 +1427,8 @@ export default function ScriptDetail() {
           onAddNode={() => setAddNodeModalVisible(true)}
           onAddLayer={() => setAddLayerModalVisible(true)}
           onAutoLayout={handleAutoLayout}
+          onGenerateInitialNode={handleGenerateInitialNode}
+          isGeneratingInitialNode={isGeneratingInitialNode}
         />
       </Layout>
 
@@ -1136,11 +1437,25 @@ export default function ScriptDetail() {
         title={`编辑节点：${currentNode?.title || ''}`}
         visible={editModalVisible}
         onCancel={() => {
-          setEditModalVisible(false);
-          setCurrentNode(null);
-          setAiResult('');
+          if (!isUpdatingNode) {
+            setEditModalVisible(false);
+            setCurrentNode(null);
+            setAiResult('');
+          }
         }}
-        onOk={() => formApi?.submitForm()}
+        onOk={() => {
+          if (!isUpdatingNode) {
+            formApi?.submitForm();
+          }
+        }}
+        confirmLoading={isUpdatingNode}
+        okButtonProps={{
+          disabled: isUpdatingNode,
+          loading: isUpdatingNode,
+        }}
+        cancelButtonProps={{
+          disabled: isUpdatingNode,
+        }}
         width={800}
       >
         <Form
@@ -1234,7 +1549,10 @@ export default function ScriptDetail() {
               </Text>
               <br />
               <Text type="secondary" size="small">
-                所属层: 第{layers.find(l => l.nodes?.some(n => n.id === currentNode.id))?.layer_order}层
+                所属层: 第{(() => {
+                  const layer = layers.find(l => l.nodes?.some(n => n.id === currentNode.id));
+                  return layer ? ((layer as any).layer_order ?? (layer as any).layerOrder ?? 0) : 0;
+                })()}层
               </Text>
               {currentNode.duration && (
                 <>
@@ -1244,6 +1562,53 @@ export default function ScriptDetail() {
                   </Text>
                 </>
               )}
+
+              {/* 展示 AI 原始内容 */}
+              {(() => {
+                // 支持两种字段名格式：aiRawContent 和 ai_raw_content
+                const metadata = currentNode.metadata as any;
+                const aiRawContent = metadata?.aiRawContent ?? metadata?.ai_raw_content;
+
+                if (!aiRawContent) return null;
+
+                return (
+                  <>
+                    <br />
+                    <br />
+                    <Card
+                      title={
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <IconTicketCode style={{ color: '#1890ff' }} />
+                          <Text strong>AI 原始生成内容</Text>
+                        </div>
+                      }
+                      style={{
+                        marginTop: 16,
+                        backgroundColor: 'var(--semi-color-fill-0)',
+                        border: '1px solid var(--semi-color-border)',
+                      }}
+                      bodyStyle={{ padding: '12px' }}
+                    >
+                      <TextArea
+                        value={typeof aiRawContent === 'string' ? aiRawContent : JSON.stringify(aiRawContent, null, 2)}
+                        readOnly
+                        autosize={{ minRows: 6, maxRows: 12 }}
+                        style={{
+                          width: '100%',
+                          fontFamily: 'monospace',
+                          fontSize: '12px',
+                          backgroundColor: 'var(--semi-color-bg-0)',
+                        }}
+                      />
+                      <div style={{ marginTop: 8 }}>
+                        <Text type="tertiary" size="small">
+                          提示：这是 AI 生成时的原始内容，包含完整的响应数据（包括 options 标签和 JSON 数据）
+                        </Text>
+                      </div>
+                    </Card>
+                  </>
+                );
+              })()}
             </div>
           )}
         </Form>
@@ -1279,7 +1644,7 @@ export default function ScriptDetail() {
           >
             {layers.map(layer => (
               <Form.Select.Option key={layer.id} value={layer.id}>
-                第{layer.layer_order}层 - {layer.title} ({layer.nodes?.length || 0}个节点)
+                第{((layer as any).layer_order ?? (layer as any).layerOrder ?? 0)}层 - {layer.title} ({layer.nodes?.length || 0}个节点)
               </Form.Select.Option>
             ))}
           </Form.Select>

@@ -32,7 +32,7 @@ export default function Dashboard() {
       const scripts = await getScripts();
       // 获取最近更新的5个剧本
       const sorted = scripts
-        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .slice(0, 5);
       setRecentScripts(sorted);
     } catch (error) {
@@ -110,7 +110,7 @@ export default function Dashboard() {
                             {getStatusText(script.status)}
                           </Text>
                           <Text type="tertiary" size="small">
-                            {new Date(script.updated_at).toLocaleDateString('zh-CN')}
+                            {new Date(script.updatedAt).toLocaleDateString('zh-CN')}
                           </Text>
                         </div>
                       </div>
