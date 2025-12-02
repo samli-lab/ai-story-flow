@@ -40,7 +40,6 @@ import {
   IconTicketCode,
 } from '@douyinfe/semi-icons';
 import { getScriptById } from '../../services/scriptService';
-import { generateStoryNode } from '../../services/mockAIService';
 import { generateInitialNode } from '../../services/nodeAIService';
 import { getLayers, createLayer } from '../../services/layerService';
 import { createNode, updateNode, deleteNode, batchUpdateNodePositions } from '../../services/nodeService';
@@ -84,6 +83,7 @@ export default function ScriptDetail() {
   // Preview State
   const [previewContent, setPreviewContent] = useState<string>('');
   const [previewBranches, setPreviewBranches] = useState<{ label: string }[]>([]);
+  const [aiRawResult, setAiRawResult] = useState<string>(''); // 保存 AI 返回的原始内容
 
   const highlightedNodeIdsRef = useRef<Set<string>>(new Set());
   const selectedNodeRef = useRef<StoryNode | null>(null);
@@ -760,149 +760,377 @@ export default function ScriptDetail() {
     if (!aiResult) {
       setPreviewContent('');
       setPreviewBranches([]);
+      setAiRawResult('');
       return;
     }
 
-    const optionsMatch = aiResult.match(/<options>([\s\S]*?)<\/options>/);
-    let content = aiResult;
-    let branches: { label: string }[] = [];
+    // 保存原始内容
+    setAiRawResult(aiResult);
 
+    // 使用和 parseAIResponse 相同的解析逻辑
+    let content = aiResult;
+    const options: string[] = [];
+
+    // 先移除代码块标记 ```
+    content = content.replace(/```[\s\S]*?```/g, '').trim();
+
+    // 查找 <options> 标签
+    const optionsMatch = content.match(/<options>([\s\S]*?)<\/options>/i);
     if (optionsMatch) {
-      content = aiResult.replace(optionsMatch[0], '').trim();
-      const optionsText = optionsMatch[1];
-      branches = optionsText.split('\n')
+      const optionsText = optionsMatch[1].trim();
+
+      // 从 <options> 标签中提取选项
+      const lines = optionsText.split('\n')
         .map(line => line.trim())
-        .filter(line => line.length > 0)
-        .map(line => ({
-          label: line.replace(/^\d+\.\s*/, '')
-        }));
+        .filter(line => line.length > 0);
+
+      lines.forEach(line => {
+        // 移除编号前缀（如 "1. " 或 "1."）和引号
+        const cleaned = line.replace(/^\d+\.\s*/, '').replace(/^["']|["']$/g, '').trim();
+        if (cleaned.length > 0 && !cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+          // 排除 JSON 格式的行
+          options.push(cleaned);
+        }
+      });
+
+      // 移除 <options> 标签及其内容
+      content = content.replace(optionsMatch[0], '').trim();
     }
 
-    setPreviewContent(content);
-    setPreviewBranches(branches);
+    // 移除 JSON 格式的选项数据（如果在 <options> 标签外）
+    try {
+      const jsonMatch = content.match(/\{"items":\s*\[[\s\S]*?\]\}/);
+      if (jsonMatch) {
+        content = content.replace(jsonMatch[0], '').trim();
+      }
+    } catch (e) {
+      // JSON 解析失败，忽略
+    }
+
+    // 再次清理代码块标记（防止有残留）
+    content = content.replace(/```[\s\S]*?```/g, '').trim();
+    // 清理多余的换行
+    content = content.replace(/\n{3,}/g, '\n\n').trim();
+
+    setPreviewContent(content.trim());
+    setPreviewBranches(options.filter(opt => opt.length > 0).map(opt => ({ label: opt })));
   }, [aiResult]);
+
+  // 构建从根节点到当前节点的历史对话
+  const buildHistoryFromRootToCurrent = (targetNode: StoryNode): Array<{ role: string; content: string }> => {
+    const history: Array<{ role: string; content: string }> = [];
+    const visited = new Set<string>();
+
+    // 找到从当前节点到根节点的路径
+    const findPathToRoot = (nodeId: string, path: StoryNode[] = []): StoryNode[] | null => {
+      if (visited.has(nodeId)) return null;
+      visited.add(nodeId);
+
+      // 找到当前节点
+      const currentNode = layers
+        .flatMap(l => l.nodes || [])
+        .find(n => n.id === nodeId);
+
+      if (!currentNode) return null;
+
+      const currentPath = [...path, currentNode];
+
+      // 检查是否是根节点（没有父节点）
+      const hasParent = layers.some(layer =>
+        layer.nodes?.some(n =>
+          n.branches?.some(branch => {
+            const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+            return toNodeId === nodeId;
+          })
+        )
+      );
+
+      if (!hasParent) {
+        // 这是根节点
+        return currentPath;
+      }
+
+      // 找到父节点（通过分支）
+      for (const layer of layers) {
+        for (const node of layer.nodes || []) {
+          const parentBranch = node.branches?.find(branch => {
+            const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+            return toNodeId === nodeId;
+          });
+
+          if (parentBranch) {
+            const parentPath = findPathToRoot(node.id, currentPath);
+            if (parentPath) return parentPath;
+          }
+        }
+      }
+
+      return null;
+    };
+
+    // 找到路径
+    const path = findPathToRoot(targetNode.id);
+    if (!path || path.length === 0) {
+      return history;
+    }
+
+    // 构建历史对话
+    for (let i = 0; i < path.length; i++) {
+      const node = path[i];
+
+      // 添加 assistant 消息（节点的 AI 原始内容）
+      const metadata = node.metadata as any;
+      const aiRawContent = metadata?.aiRawContent ?? metadata?.ai_raw_content;
+      if (aiRawContent) {
+        history.push({
+          role: 'assistant',
+          content: typeof aiRawContent === 'string' ? aiRawContent : JSON.stringify(aiRawContent, null, 2),
+        });
+      }
+
+      // 如果不是最后一个节点，添加 user 消息（分支标签）
+      if (i < path.length - 1) {
+        const nextNode = path[i + 1];
+        // 找到从当前节点到下一个节点的分支
+        const branch = node.branches?.find(branch => {
+          const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+          return toNodeId === nextNode.id;
+        });
+
+        if (branch) {
+          const branchLabel = (branch as any).branch_label ?? (branch as any).branchLabel ?? '';
+          if (branchLabel) {
+            history.push({
+              role: 'user',
+              content: branchLabel,
+            });
+          }
+        }
+      }
+    }
+
+    return history;
+  };
 
   // AI 生成处理
   const handleGenerateAI = async () => {
+    if (!currentNode || !id) {
+      Toast.warning('请先选择节点');
+      return;
+    }
+
+    const NODE_AI_API_URL = import.meta.env.VITE_NODE_AI_API_URL || '';
+    if (!NODE_AI_API_URL) {
+      Toast.error('AI 节点生成 API URL 未配置');
+      return;
+    }
+
     setIsGenerating(true);
     try {
       setAiResult('');
-      const result = await generateStoryNode(currentNode?.content || '');
-      setAiResult(result);
+
+      // 构建历史对话
+      const history = buildHistoryFromRootToCurrent(currentNode);
+
+      // 找到当前节点的父节点和分支标签
+      let parentBranchLabel = '';
+      for (const layer of layers) {
+        for (const node of layer.nodes || []) {
+          const branch = node.branches?.find(branch => {
+            const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+            return toNodeId === currentNode.id;
+          });
+          if (branch) {
+            parentBranchLabel = (branch as any).branch_label ?? (branch as any).branchLabel ?? '';
+            break;
+          }
+        }
+        if (parentBranchLabel) break;
+      }
+
+      // 构建 question
+      const question = parentBranchLabel
+        ? `I choose ${parentBranchLabel}, please continue generating the script.`
+        : 'Please continue generating the script.';
+
+      // 调用 AI API
+      const apiUrl = `${NODE_AI_API_URL}/chat/simple-chat`;
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          modelId: '剧本-副本',
+          promptId: 'x09UFh3AtIcSO2lJ0UFcF',
+          history: history,
+          featureFlag: 'normal',
+          streamReply: false,
+          question: question,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API 请求失败: ${response.status} ${response.statusText}. ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      // 支持多种响应格式
+      let rawContent = '';
+      if (result.content) {
+        rawContent = result.content;
+      } else if (result.text) {
+        rawContent = result.text;
+      } else if (result.message) {
+        rawContent = result.message;
+      } else if (result.data?.content) {
+        rawContent = result.data.content;
+      } else if (result.data?.text) {
+        rawContent = result.data.text;
+      } else {
+        rawContent = JSON.stringify(result, null, 2);
+      }
+
+      setAiResult(rawContent);
+      setAiRawResult(rawContent); // 保存原始内容用于后续保存到 metadata
     } catch (error) {
-      Toast.error('生成失败');
+      Toast.error(error instanceof Error ? error.message : '生成失败');
+      console.error('生成失败:', error);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleApplyAI = () => {
-    if (!currentNode || !id) return;
+  const handleApplyAI = async () => {
+    if (!currentNode || !id || isUpdatingNode) return;
+
+    setIsUpdatingNode(true);
+
+    // 显示开始提示
+    let loadingToast: any = null;
+
+    const showProgress = (message: string) => {
+      if (loadingToast) {
+        Toast.close(loadingToast);
+      }
+      loadingToast = Toast.info({
+        content: message,
+        duration: 0, // 不自动关闭
+      });
+    };
 
     try {
       const newContent = previewContent;
       const newBranches = previewBranches;
 
-      const currentLayerIndex = layers.findIndex(l => l.nodes?.some(n => n.id === currentNode.id));
-      if (currentLayerIndex === -1) return;
-
-      const currentLayer = layers[currentLayerIndex];
-      let nextLayer = layers[currentLayerIndex + 1];
-      let updatedLayers = [...layers];
-
-      if (!nextLayer && newBranches.length > 0) {
-        // 支持两种字段名格式：layer_order 和 layerOrder
-        const currentLayerOrder = (currentLayer as any).layer_order ?? (currentLayer as any).layerOrder ?? 1;
-        const newLayerOrder = currentLayerOrder + 1;
-        const newLayerId = `layer-${Date.now()}-auto`;
-        nextLayer = {
-          id: newLayerId,
-          script_id: id,
-          layer_order: newLayerOrder,
-          title: `第${newLayerOrder}层`,
-          is_collapsed: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          nodes: [],
-        };
-        updatedLayers.push(nextLayer);
-      }
-
-      const createdNodes: StoryNode[] = [];
-      if (nextLayer) {
-        const startOrder = (nextLayer.nodes?.length || 0) + 1;
-        newBranches.forEach((branch, index) => {
-          const newNodeId = `node-${Date.now()}-${index}`;
-          const newNode: StoryNode = {
-            id: newNodeId,
-            layer_id: nextLayer!.id,
-            node_order: startOrder + index,
-            title: branch.label,
-            content: '',
-            duration: 30,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            branches: [],
-          };
-          createdNodes.push(newNode);
-        });
-
-        updatedLayers = updatedLayers.map(l => {
-          if (l.id === nextLayer.id) {
-            return {
-              ...l,
-              nodes: [...(l.nodes || []), ...createdNodes]
-            };
-          }
-          return l;
-        });
-      }
-
-      updatedLayers = updatedLayers.map(l => {
-        if (l.id === currentLayer.id) {
-          return {
-            ...l,
-            nodes: l.nodes?.map(n => {
-              if (n.id === currentNode.id) {
-                const existingBranches = n.branches || [];
-                const newBranchObjects = createdNodes.map((targetNode, index) => ({
-                  id: `branch-${Date.now()}-${index}`,
-                  from_node_id: n.id,
-                  to_node_id: targetNode.id,
-                  branch_label: newBranches[index].label,
-                  branch_type: 'default' as const,
-                  branch_order: existingBranches.length + 1 + index,
-                  created_at: new Date().toISOString(),
-                }));
-
-                const updatedNode = {
-                  ...n,
-                  content: newContent,
-                  branches: [...existingBranches, ...newBranchObjects]
-                };
-
-                setCurrentNode(updatedNode);
-                return updatedNode;
-              }
-              return n;
-            })
-          };
-        }
-        return l;
-      });
-
-      setLayers(updatedLayers);
-      convertToFlowNodes(updatedLayers);
-
+      // 先把正则后的内容展示到上面的内容框
       if (formApi) {
         formApi.setValue('content', newContent);
       }
 
+      showProgress('正在保存节点内容...');
+
+      // 更新当前节点的内容和 metadata
+      const updatedCurrentNode = await updateNode(id, currentNode.id, {
+        title: currentNode.title,
+        content: newContent,
+        change_reason: 'continue',
+        metadata: {
+          ...(currentNode.metadata || {}),
+          aiRawContent: aiRawResult, // 保存 AI 返回的原始内容
+        },
+      });
+
+      const currentLayerIndex = layers.findIndex(l => l.nodes?.some(n => n.id === currentNode.id));
+      if (currentLayerIndex === -1) {
+        if (loadingToast) Toast.close(loadingToast);
+        return;
+      }
+
+      const currentLayer = layers[currentLayerIndex];
+      let nextLayer = layers[currentLayerIndex + 1];
+
+      // 如果有分支预览，创建子节点（不生成内容，只创建节点）
+      if (newBranches && newBranches.length > 0) {
+        showProgress(`正在创建 ${newBranches.length} 个子节点...`);
+
+        // 确保下一层存在
+        if (!nextLayer) {
+          // 支持两种字段名格式：layer_order 和 layerOrder
+          const currentLayerOrder = (currentLayer as any).layer_order ?? (currentLayer as any).layerOrder ?? 1;
+          const newLayerOrder = currentLayerOrder + 1;
+          nextLayer = await createLayer(id, {
+            title: `第${newLayerOrder}层`,
+            description: '分支层',
+            layer_order: newLayerOrder,
+          });
+        }
+
+        // 为每个分支创建子节点
+        for (let index = 0; index < newBranches.length; index++) {
+          const branchLabel = newBranches[index].label;
+
+          // 更新进度提示
+          showProgress(`正在创建子节点 ${index + 1}/${newBranches.length}: ${branchLabel}`);
+
+          // 计算子节点位置
+          const secondLayerOrder = (nextLayer as any).layer_order ?? (nextLayer as any).layerOrder ?? 2;
+          const childPositionX = layoutDirection === 'horizontal'
+            ? secondLayerOrder * 400
+            : 100 + (index - (newBranches.length - 1) / 2) * 200;
+          const childPositionY = layoutDirection === 'horizontal'
+            ? 100 + (index - (newBranches.length - 1) / 2) * 120
+            : secondLayerOrder * 200;
+
+          // 创建子节点（空内容）
+          const childNode = await createNode(id, nextLayer.id, {
+            title: branchLabel,
+            content: '',
+            duration: 30,
+            position_x: childPositionX,
+            position_y: childPositionY,
+          });
+
+          // 创建分支连接
+          await createBranch(id, {
+            from_node_id: updatedCurrentNode.id,
+            to_node_id: childNode.id,
+            branch_label: branchLabel,
+            branch_type: 'default',
+            branch_order: index + 1,
+          });
+        }
+      }
+
+      showProgress('正在刷新页面数据...');
+
+      // 重新加载层数据以更新 UI
+      await loadLayers();
+
+      // 关闭进度提示
+      if (loadingToast) {
+        Toast.close(loadingToast);
+      }
+
       Toast.success('AI生成内容并应用成功');
+
       setAiResult('');
+      setAiRawResult('');
+
+      // 成功以后退出模态框
+      setEditModalVisible(false);
+      setCurrentNode(null);
     } catch (error) {
       console.error(error);
-      Toast.error('应用失败');
+      // 关闭进度提示
+      if (loadingToast) {
+        Toast.close(loadingToast);
+      }
+      Toast.error(error instanceof Error ? `应用失败: ${error.message}` : '应用失败');
+    } finally {
+      setIsUpdatingNode(false);
     }
   };
 
@@ -1508,7 +1736,15 @@ export default function ScriptDetail() {
                       >
                         重新生成
                       </Button>
-                      <Button onClick={handleApplyAI} theme='solid' type='primary'>应用结果</Button>
+                      <Button
+                        onClick={handleApplyAI}
+                        theme='solid'
+                        type='primary'
+                        loading={isUpdatingNode}
+                        disabled={isUpdatingNode}
+                      >
+                        应用结果
+                      </Button>
                     </Space>
                   }
                 >
