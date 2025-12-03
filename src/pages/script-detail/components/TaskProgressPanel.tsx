@@ -53,6 +53,7 @@ export default function TaskProgressPanel({ progress, isRightCollapsed = false }
     <div
       className="task-progress-panel"
       style={{
+        position: 'absolute',
         right: isRightCollapsed ? '20px' : '300px',
         bottom: '20px',
         transition: 'right 0.3s ease',

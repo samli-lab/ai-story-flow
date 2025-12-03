@@ -14,6 +14,7 @@ type CustomNodeData = {
   isDimmed?: boolean;
   onDelete?: () => void;
   onTraceAncestors?: () => void;
+  isDeleting?: boolean;
 }
 
 type CustomNodeProps = NodeProps<Node<CustomNodeData>>;
@@ -78,12 +79,19 @@ function CustomNode(props: CustomNodeProps) {
             <IconSteps />
           </div>
           <div
-            className="delete-icon-wrapper"
+            className={`delete-icon-wrapper ${data.isDeleting ? 'deleting' : ''}`}
             onClick={(e) => {
               e.stopPropagation();
-              data.onDelete?.();
+              if (!data.isDeleting) {
+                data.onDelete?.();
+              }
             }}
-            title="删除节点"
+            title={data.isDeleting ? '正在删除...' : '删除节点'}
+            style={{
+              opacity: data.isDeleting ? 0.6 : 1,
+              cursor: data.isDeleting ? 'not-allowed' : 'pointer',
+              pointerEvents: data.isDeleting ? 'none' : 'auto',
+            }}
           >
             <IconDelete style={{ color: '#fff', fontSize: 14 }} />
           </div>

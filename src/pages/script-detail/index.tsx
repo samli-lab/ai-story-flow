@@ -83,6 +83,10 @@ export default function ScriptDetail() {
   const [isAutoGeneratingNodes, setIsAutoGeneratingNodes] = useState(false);
   const [autoGenerateModalVisible, setAutoGenerateModalVisible] = useState(false);
   const [isDeletingEmptyNodes, setIsDeletingEmptyNodes] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isAddingNode, setIsAddingNode] = useState(false);
+  const [isAddingLayer, setIsAddingLayer] = useState(false);
+  const [deletingNodeIds, setDeletingNodeIds] = useState<Set<string>>(new Set());
   const [taskProgress, setTaskProgress] = useState<{
     currentStep: string;
     totalSteps: number;
@@ -279,6 +283,7 @@ export default function ScriptDetail() {
             isDimmed: highlightedNodeIdsRef.current.size > 0 && !highlightedNodeIdsRef.current.has(node.id),
             onDelete: () => handleDeleteNodeRef.current(node.id),
             onTraceAncestors: () => handleTraceAncestorsRef.current(node.id),
+            isDeleting: deletingNodeIds.has(node.id),
           },
           style: {
             width: 200,
@@ -504,7 +509,13 @@ export default function ScriptDetail() {
 
   // 手动保存节点位置和所有数据
   const handleSave = async () => {
-    if (!id) return;
+    if (!id || isSaving) return;
+
+    setIsSaving(true);
+    const loadingToast = Toast.info({
+      content: '正在保存...',
+      duration: 0,
+    });
 
     try {
       // 收集所有需要更新位置的节点，过滤掉无效的位置值
@@ -559,10 +570,14 @@ export default function ScriptDetail() {
       }));
 
       setLayers(updatedLayers);
+      Toast.close(loadingToast);
       Toast.success('保存成功');
     } catch (error) {
+      Toast.close(loadingToast);
       Toast.error('保存失败');
       console.error(error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -622,7 +637,13 @@ export default function ScriptDetail() {
   // 处理节点删除
   const handleDeleteNode = useCallback(
     async (nodeId: string) => {
-      if (!id) return;
+      if (!id || deletingNodeIds.has(nodeId)) return;
+
+      setDeletingNodeIds(prev => new Set(prev).add(nodeId));
+      const loadingToast = Toast.info({
+        content: '正在删除节点...',
+        duration: 0,
+      });
 
       try {
         // 调用 API 删除节点（会自动删除相关分支）
@@ -659,13 +680,21 @@ export default function ScriptDetail() {
         // 重新转换节点（移除已删除的节点）
         convertToFlowNodes(updatedLayers);
 
+        Toast.close(loadingToast);
         Toast.success(`节点已删除${result.deleted_branches_count > 0 ? `（已删除 ${result.deleted_branches_count} 个分支）` : ''}`);
       } catch (error) {
+        Toast.close(loadingToast);
         Toast.error('删除节点失败');
         console.error(error);
+      } finally {
+        setDeletingNodeIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(nodeId);
+          return newSet;
+        });
       }
     },
-    [id, edges, layers, setEdges]
+    [id, edges, layers, setEdges, deletingNodeIds]
   );
 
   // 向上溯源
@@ -1583,9 +1612,10 @@ export default function ScriptDetail() {
                   },
                 });
 
-                // 重新加载层数据以获取更新后的节点
+                // 重新加载层数据以获取更新后的节点，并立即刷新页面展示
                 const updatedLayers = await getLayers(id);
                 setLayers(updatedLayers);
+                convertToFlowNodes(updatedLayers);
 
                 // 从更新后的层数据中获取最新的节点信息
                 const updatedNode = updatedLayers
@@ -1655,6 +1685,11 @@ export default function ScriptDetail() {
                       branch_type: 'default',
                       branch_order: index + 1,
                     });
+
+                    // 立即刷新页面展示新创建的节点和分支
+                    const refreshedLayersAfterCreate = await getLayers(id);
+                    setLayers(refreshedLayersAfterCreate);
+                    convertToFlowNodes(refreshedLayersAfterCreate);
                   }
                 }
               } else if (childCount < 2) {
@@ -1722,6 +1757,11 @@ export default function ScriptDetail() {
                     branch_type: 'default',
                     branch_order: index + 1,
                   });
+
+                  // 立即刷新页面展示新创建的节点和分支
+                  const refreshedLayersAfterCreate = await getLayers(id);
+                  setLayers(refreshedLayersAfterCreate);
+                  convertToFlowNodes(refreshedLayersAfterCreate);
                 }
               }
 
@@ -2011,8 +2051,9 @@ export default function ScriptDetail() {
 
   // 添加节点的处理函数
   const handleAddNode = async (values: any) => {
-    if (!id) return;
+    if (!id || isAddingNode) return;
 
+    setIsAddingNode(true);
     try {
       // 找到要添加节点的层
       const targetLayer = layers.find(l => l.id === values.layerId);
@@ -2037,17 +2078,21 @@ export default function ScriptDetail() {
       // 重新加载层数据
       await loadLayers();
 
+      setAddNodeModalVisible(false);
       Toast.success('节点添加成功');
     } catch (error) {
       Toast.error('添加节点失败');
       console.error(error);
+    } finally {
+      setIsAddingNode(false);
     }
   };
 
   // 添加层的处理函数
   const handleAddLayer = async (values: any) => {
-    if (!id) return;
+    if (!id || isAddingLayer) return;
 
+    setIsAddingLayer(true);
     try {
       await createLayer(id, {
         title: values.title,
@@ -2063,6 +2108,8 @@ export default function ScriptDetail() {
     } catch (error) {
       Toast.error('添加层失败');
       console.error(error);
+    } finally {
+      setIsAddingLayer(false);
     }
   };
 
@@ -2303,8 +2350,10 @@ export default function ScriptDetail() {
           type="primary"
           size="large"
           onClick={handleSave}
+          loading={isSaving}
+          disabled={isSaving}
         >
-          保存
+          {isSaving ? '保存中...' : '保存'}
         </Button>
       </Tooltip>
     </Space>
@@ -2432,7 +2481,7 @@ export default function ScriptDetail() {
         />
       </Layout>
 
-      {/* 任务进度面板 */}
+      {/* 任务进度面板 - 独立渲染在画布上 */}
       <TaskProgressPanel progress={taskProgress} isRightCollapsed={isRightCollapsed} />
 
       {/* 编辑节点内容弹窗 */}
@@ -2630,14 +2679,25 @@ export default function ScriptDetail() {
         title="添加新节点"
         visible={addNodeModalVisible}
         onCancel={() => {
-          setAddNodeModalVisible(false);
-        }}
-        onOk={() => {
-          const values = formApi?.getValues();
-          if (values?.layerId && values?.title && values?.content) {
-            handleAddNode(values);
+          if (!isAddingNode) {
             setAddNodeModalVisible(false);
           }
+        }}
+        onOk={() => {
+          if (!isAddingNode) {
+            const values = formApi?.getValues();
+            if (values?.layerId && values?.title && values?.content) {
+              handleAddNode(values);
+            }
+          }
+        }}
+        confirmLoading={isAddingNode}
+        okButtonProps={{
+          disabled: isAddingNode,
+          loading: isAddingNode,
+        }}
+        cancelButtonProps={{
+          disabled: isAddingNode,
         }}
         width={600}
       >
@@ -2687,13 +2747,25 @@ export default function ScriptDetail() {
         title="添加新层"
         visible={addLayerModalVisible}
         onCancel={() => {
-          setAddLayerModalVisible(false);
+          if (!isAddingLayer) {
+            setAddLayerModalVisible(false);
+          }
         }}
         onOk={() => {
-          const values = formApi?.getValues();
-          if (values?.title) {
-            handleAddLayer(values);
+          if (!isAddingLayer) {
+            const values = formApi?.getValues();
+            if (values?.title) {
+              handleAddLayer(values);
+            }
           }
+        }}
+        confirmLoading={isAddingLayer}
+        okButtonProps={{
+          disabled: isAddingLayer,
+          loading: isAddingLayer,
+        }}
+        cancelButtonProps={{
+          disabled: isAddingLayer,
         }}
         width={600}
       >
