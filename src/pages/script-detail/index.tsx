@@ -51,6 +51,7 @@ import { calculateNodePositions } from './utils/layoutUtils';
 import FunctionMenu from './components/FunctionMenu';
 import CustomEdge from './components/CustomEdge';
 import CustomNode from './components/CustomNode';
+import TaskProgressPanel from './components/TaskProgressPanel';
 import './styles/ScriptDetail.css';
 
 const { Content, Sider } = Layout;
@@ -79,6 +80,28 @@ export default function ScriptDetail() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingInitialNode, setIsGeneratingInitialNode] = useState(false);
   const [isUpdatingNode, setIsUpdatingNode] = useState(false);
+  const [isAutoGeneratingNodes, setIsAutoGeneratingNodes] = useState(false);
+  const [autoGenerateModalVisible, setAutoGenerateModalVisible] = useState(false);
+  const [isDeletingEmptyNodes, setIsDeletingEmptyNodes] = useState(false);
+  const [taskProgress, setTaskProgress] = useState<{
+    currentStep: string;
+    totalSteps: number;
+    completedSteps: number;
+    currentLayer: number;
+    targetLayer: number;
+    currentNodeIndex: number;
+    totalNodes: number;
+    isRunning: boolean;
+  } | null>({
+    currentStep: '等待任务开始...',
+    totalSteps: 0,
+    completedSteps: 0,
+    currentLayer: 0,
+    targetLayer: 0,
+    currentNodeIndex: 0,
+    totalNodes: 0,
+    isRunning: false,
+  });
 
   // Preview State
   const [previewContent, setPreviewContent] = useState<string>('');
@@ -1134,6 +1157,751 @@ export default function ScriptDetail() {
     }
   };
 
+  // 一键自动生成节点
+  const handleAutoGenerateNodes = async () => {
+    if (!id || !script) {
+      Toast.warning('请先加载剧本信息');
+      return;
+    }
+
+    const values = formApi?.getValues();
+    if (!values?.targetLayer || values.targetLayer < 1) {
+      Toast.warning('请输入有效的目标层数');
+      return;
+    }
+
+    const targetLayer = values.targetLayer;
+    const NODE_AI_API_URL = import.meta.env.VITE_NODE_AI_API_URL || '';
+    if (!NODE_AI_API_URL) {
+      Toast.error('AI 节点生成 API URL 未配置');
+      return;
+    }
+
+    setIsAutoGeneratingNodes(true);
+    setAutoGenerateModalVisible(false);
+
+    // 配置：最大重试次数（格式错误时自动重新生成）
+    const MAX_RETRY_COUNT = 3;
+
+    let loadingToast: any = null;
+    const showProgress = (message: string) => {
+      if (loadingToast) {
+        Toast.close(loadingToast);
+      }
+      loadingToast = Toast.info({
+        content: message,
+        duration: 0,
+      });
+    };
+
+    try {
+      // 获取当前最大层数
+      const getMaxLayerOrder = () => {
+        let maxOrder = 0;
+        for (const layer of layers) {
+          const order = (layer as any).layer_order ?? (layer as any).layerOrder ?? 0;
+          if (order > maxOrder) {
+            maxOrder = order;
+          }
+        }
+        return maxOrder;
+      };
+
+      // 检测节点是否有子节点（通过分支）
+      const getChildNodeCount = (node: StoryNode): number => {
+        return node.branches?.length || 0;
+      };
+
+      // 检测节点是否有内容
+      const hasContent = (node: StoryNode): boolean => {
+        return !!(node.content && node.content.trim().length > 0);
+      };
+
+      // 获取需要生成子节点的节点列表
+      const getNodesNeedingChildren = (currentLayers: Layer[], maxLayerOrder: number): StoryNode[] => {
+        const nodes: StoryNode[] = [];
+        for (const layer of currentLayers) {
+          const layerOrder = (layer as any).layer_order ?? (layer as any).layerOrder ?? 0;
+
+          // 如果当前层已经达到或超过目标层数，跳过（不生成子节点）
+          if (layerOrder >= maxLayerOrder) {
+            continue;
+          }
+
+          for (const node of layer.nodes || []) {
+            const childCount = getChildNodeCount(node);
+            const nodeHasContent = hasContent(node);
+
+            // 如果节点没有内容，或者子节点数量少于2个，都需要生成
+            if (!nodeHasContent || childCount < 2) {
+              nodes.push(node);
+            }
+          }
+        }
+        return nodes;
+      };
+
+      // 为单个节点生成内容和子节点
+      const generateNodeContent = async (node: StoryNode, currentLayers: Layer[]): Promise<{ content: string; options: string[]; rawContent: string }> => {
+        // 构建历史对话（使用最新的层数据）
+        const buildHistoryWithLayers = (targetNode: StoryNode, layersData: Layer[]): Array<{ role: string; content: string }> => {
+          const history: Array<{ role: string; content: string }> = [];
+          const visited = new Set<string>();
+
+          // 找到从当前节点到根节点的路径
+          const findPathToRoot = (nodeId: string, path: StoryNode[] = []): StoryNode[] | null => {
+            if (visited.has(nodeId)) return null;
+            visited.add(nodeId);
+
+            // 找到当前节点
+            const currentNode = layersData
+              .flatMap(l => l.nodes || [])
+              .find(n => n.id === nodeId);
+
+            if (!currentNode) return null;
+
+            const currentPath = [...path, currentNode];
+
+            // 检查是否是根节点（没有父节点）
+            const hasParent = layersData.some(layer =>
+              layer.nodes?.some(n =>
+                n.branches?.some(branch => {
+                  const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+                  return toNodeId === nodeId;
+                })
+              )
+            );
+
+            if (!hasParent) {
+              // 这是根节点
+              return currentPath;
+            }
+
+            // 找到父节点（通过分支）
+            for (const layer of layersData) {
+              for (const node of layer.nodes || []) {
+                const parentBranch = node.branches?.find(branch => {
+                  const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+                  return toNodeId === nodeId;
+                });
+
+                if (parentBranch) {
+                  const parentPath = findPathToRoot(node.id, currentPath);
+                  if (parentPath) return parentPath;
+                }
+              }
+            }
+
+            return null;
+          };
+
+          // 找到路径
+          const path = findPathToRoot(targetNode.id);
+          if (!path || path.length === 0) {
+            return history;
+          }
+
+          // 构建历史对话
+          for (let i = 0; i < path.length; i++) {
+            const node = path[i];
+
+            // 添加 assistant 消息（节点的 AI 原始内容）
+            const metadata = node.metadata as any;
+            const aiRawContent = metadata?.aiRawContent ?? metadata?.ai_raw_content;
+            if (aiRawContent) {
+              history.push({
+                role: 'assistant',
+                content: typeof aiRawContent === 'string' ? aiRawContent : JSON.stringify(aiRawContent, null, 2),
+              });
+            }
+
+            // 如果不是最后一个节点，添加 user 消息（分支标签）
+            if (i < path.length - 1) {
+              const nextNode = path[i + 1];
+              // 找到从当前节点到下一个节点的分支
+              const branch = node.branches?.find(branch => {
+                const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+                return toNodeId === nextNode.id;
+              });
+
+              if (branch) {
+                const branchLabel = (branch as any).branch_label ?? (branch as any).branchLabel ?? '';
+                if (branchLabel) {
+                  history.push({
+                    role: 'user',
+                    content: branchLabel,
+                  });
+                }
+              }
+            }
+          }
+
+          return history;
+        };
+
+        // 构建历史对话（使用最新的层数据）
+        const history = buildHistoryWithLayers(node, currentLayers);
+
+        // 找到当前节点的父节点和分支标签（使用最新的层数据）
+        let parentBranchLabel = '';
+        for (const layer of currentLayers) {
+          for (const n of layer.nodes || []) {
+            const branch = n.branches?.find(branch => {
+              const toNodeId = (branch as any).to_node_id ?? (branch as any).toNodeId;
+              return toNodeId === node.id;
+            });
+            if (branch) {
+              parentBranchLabel = (branch as any).branch_label ?? (branch as any).branchLabel ?? '';
+              break;
+            }
+          }
+          if (parentBranchLabel) break;
+        }
+
+        // 构建 question
+        const question = parentBranchLabel
+          ? `I choose ${parentBranchLabel}, please continue generating the script.`
+          : 'Please continue generating the script.';
+
+        // 调用 AI API
+        const apiUrl = `${NODE_AI_API_URL}/chat/simple-chat`;
+        let retryCount = 0;
+        let isValidFormat = false;
+        let result: { content: string; options: string[]; rawContent: string } | null = null;
+
+        while (retryCount < MAX_RETRY_COUNT && !isValidFormat) {
+          try {
+            const response = await fetch(apiUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                modelId: '剧本-副本',
+                promptId: 'x09UFh3AtIcSO2lJ0UFcF',
+                history: history,
+                featureFlag: 'normal',
+                streamReply: false,
+                question: question,
+              }),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`API 请求失败: ${response.status} ${response.statusText}. ${errorText}`);
+            }
+
+            const apiResult = await response.json();
+
+            // 支持多种响应格式
+            let rawContent = '';
+            if (apiResult.content) {
+              rawContent = apiResult.content;
+            } else if (apiResult.text) {
+              rawContent = apiResult.text;
+            } else if (apiResult.message) {
+              rawContent = apiResult.message;
+            } else if (apiResult.data?.content) {
+              rawContent = apiResult.data.content;
+            } else if (apiResult.data?.text) {
+              rawContent = apiResult.data.text;
+            } else {
+              rawContent = JSON.stringify(apiResult, null, 2);
+            }
+
+            // 解析内容和选项（使用和 parseAIResponse 相同的逻辑）
+            let content = rawContent;
+            const options: string[] = [];
+
+            // 先移除代码块标记 ```
+            content = content.replace(/```[\s\S]*?```/g, '').trim();
+
+            // 查找 <options> 标签
+            const optionsMatch = content.match(/<options>([\s\S]*?)<\/options>/i);
+            if (optionsMatch) {
+              const optionsText = optionsMatch[1].trim();
+              const lines = optionsText.split('\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+
+              lines.forEach(line => {
+                const cleaned = line.replace(/^\d+\.\s*/, '').replace(/^["']|["']$/g, '').trim();
+                if (cleaned.length > 0 && !cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+                  options.push(cleaned);
+                }
+              });
+
+              content = content.replace(optionsMatch[0], '').trim();
+            }
+
+            // 移除 JSON 格式的选项数据
+            try {
+              const jsonMatch = content.match(/\{"items":\s*\[[\s\S]*?\]\}/);
+              if (jsonMatch) {
+                content = content.replace(jsonMatch[0], '').trim();
+              }
+            } catch (e) {
+              // 忽略
+            }
+
+            content = content.replace(/```[\s\S]*?```/g, '').trim();
+            content = content.replace(/\n{3,}/g, '\n\n').trim();
+
+            // 检查格式是否正确：应该至少提取到2个选项
+            if (options && options.length >= 2) {
+              isValidFormat = true;
+              result = {
+                content: content.trim(),
+                options: options.slice(0, 2), // 只取前2个选项
+                rawContent: rawContent,
+              };
+            } else {
+              retryCount++;
+              if (retryCount < MAX_RETRY_COUNT) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+            }
+          } catch (error) {
+            retryCount++;
+            if (retryCount >= MAX_RETRY_COUNT) {
+              throw error;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+
+        if (!result || !isValidFormat) {
+          throw new Error(`经过 ${MAX_RETRY_COUNT} 次重试后，仍无法提取到有效的选项格式。`);
+        }
+
+        return result;
+      };
+
+      // 主循环：逐层生成
+      let currentMaxLayer = getMaxLayerOrder();
+      let totalSteps = 0;
+      let completedSteps = 0;
+
+      // 初始化任务进度
+      setTaskProgress({
+        currentStep: '准备开始生成...',
+        totalSteps: 0,
+        completedSteps: 0,
+        currentLayer: currentMaxLayer,
+        targetLayer: targetLayer,
+        currentNodeIndex: 0,
+        totalNodes: 0,
+        isRunning: true,
+      });
+
+      try {
+        while (currentMaxLayer < targetLayer) {
+          // 重新加载层数据
+          const currentLayers = await getLayers(id);
+          setLayers(currentLayers);
+
+          // 获取需要生成子节点的节点（传入目标层数，确保不会在目标层生成子节点）
+          const nodesNeedingChildren = getNodesNeedingChildren(currentLayers, targetLayer);
+
+          if (nodesNeedingChildren.length === 0) {
+            // 没有需要生成的节点，检查是否已达到目标层数
+            if (currentMaxLayer >= targetLayer) {
+              break;
+            }
+            // 如果还没有达到目标层数但没有需要生成的节点，说明所有节点都有子节点了
+            // 这种情况不应该发生，但为了安全起见，我们继续下一层
+            currentMaxLayer++;
+            continue;
+          }
+
+          // 更新总步骤数（只在第一次计算）
+          if (totalSteps === 0) {
+            // 估算总步骤数：每层节点数 + 层数
+            let estimatedSteps = 0;
+            for (let layerOrder = currentMaxLayer; layerOrder < targetLayer; layerOrder++) {
+              const layerNodes = currentLayers.filter(l => {
+                const order = (l as any).layer_order ?? (l as any).layerOrder ?? 0;
+                return order === layerOrder;
+              });
+              estimatedSteps += layerNodes.reduce((sum, l) => sum + (l.nodes?.length || 0), 0);
+            }
+            totalSteps = estimatedSteps || nodesNeedingChildren.length;
+          }
+
+          showProgress(`正在生成第 ${currentMaxLayer + 1} 层，共 ${nodesNeedingChildren.length} 个节点需要生成子节点...`);
+
+          // 更新任务进度
+          setTaskProgress({
+            currentStep: `正在生成第 ${currentMaxLayer + 1} 层`,
+            totalSteps: totalSteps,
+            completedSteps: completedSteps,
+            currentLayer: currentMaxLayer + 1,
+            targetLayer: targetLayer,
+            currentNodeIndex: 0,
+            totalNodes: nodesNeedingChildren.length,
+            isRunning: true,
+          });
+
+          // 为每个需要生成子节点的节点生成内容
+          for (let i = 0; i < nodesNeedingChildren.length; i++) {
+            const node = nodesNeedingChildren[i];
+            const nodeLayer = currentLayers.find(l => l.nodes?.some(n => n.id === node.id));
+
+            if (!nodeLayer) continue;
+
+            showProgress(`正在为节点 "${node.title}" 生成内容 (${i + 1}/${nodesNeedingChildren.length})...`);
+
+            // 更新节点进度
+            setTaskProgress({
+              currentStep: `正在为节点 "${node.title}" 生成内容`,
+              totalSteps: totalSteps,
+              completedSteps: completedSteps,
+              currentLayer: currentMaxLayer + 1,
+              targetLayer: targetLayer,
+              currentNodeIndex: i + 1,
+              totalNodes: nodesNeedingChildren.length,
+              isRunning: true,
+            });
+
+            try {
+              const nodeHasContent = hasContent(node);
+              const childCount = getChildNodeCount(node);
+
+              // 如果节点没有内容，先生成内容
+              if (!nodeHasContent) {
+                // 生成节点内容（传入最新的层数据）
+                const { content, options, rawContent } = await generateNodeContent(node, currentLayers);
+
+                // 更新节点内容
+                await updateNode(id, node.id, {
+                  title: node.title,
+                  content: content,
+                  change_reason: 'continue',
+                  metadata: {
+                    ...(node.metadata || {}),
+                    aiRawContent: rawContent,
+                  },
+                });
+
+                // 重新加载层数据以获取更新后的节点
+                const updatedLayers = await getLayers(id);
+                setLayers(updatedLayers);
+
+                // 从更新后的层数据中获取最新的节点信息
+                const updatedNode = updatedLayers
+                  .flatMap(l => l.nodes || [])
+                  .find(n => n.id === node.id);
+
+                if (!updatedNode) {
+                  console.error(`无法找到更新后的节点: ${node.id}`);
+                  continue;
+                }
+
+                // 如果节点已经有内容但子节点不足2个，需要生成子节点
+                // 检查下一层是否会超过目标层数
+                const nodeLayerOrder = (nodeLayer as any).layer_order ?? (nodeLayer as any).layerOrder ?? 1;
+                const nextLayerOrder = nodeLayerOrder + 1;
+
+                // 如果下一层会超过目标层数，不生成子节点
+                if (childCount < 2 && options && options.length >= 2 && nextLayerOrder <= targetLayer) {
+                  // 确保下一层存在
+
+                  let nextLayer = updatedLayers.find(l => {
+                    const order = (l as any).layer_order ?? (l as any).layerOrder;
+                    return order === nextLayerOrder;
+                  });
+
+                  if (!nextLayer) {
+                    nextLayer = await createLayer(id, {
+                      title: `第${nextLayerOrder}层`,
+                      description: '分支层',
+                      layer_order: nextLayerOrder,
+                    });
+                    // 重新加载层数据
+                    const refreshedLayers = await getLayers(id);
+                    setLayers(refreshedLayers);
+                    nextLayer = refreshedLayers.find(l => {
+                      const order = (l as any).layer_order ?? (l as any).layerOrder;
+                      return order === nextLayerOrder;
+                    }) || nextLayer;
+                  }
+
+                  // 为每个选项创建子节点（只创建2个）
+                  for (let index = 0; index < Math.min(2, options.length); index++) {
+                    const optionLabel = options[index];
+
+                    // 计算子节点位置
+                    const childPositionX = layoutDirection === 'horizontal'
+                      ? nextLayerOrder * 400
+                      : 100 + (index - 0.5) * 200;
+                    const childPositionY = layoutDirection === 'horizontal'
+                      ? 100 + (index - 0.5) * 120
+                      : nextLayerOrder * 200;
+
+                    // 创建子节点（空内容）
+                    const childNode = await createNode(id, nextLayer.id, {
+                      title: optionLabel,
+                      content: '',
+                      duration: 30,
+                      position_x: childPositionX,
+                      position_y: childPositionY,
+                    });
+
+                    // 创建分支连接
+                    await createBranch(id, {
+                      from_node_id: updatedNode.id,
+                      to_node_id: childNode.id,
+                      branch_label: optionLabel,
+                      branch_type: 'default',
+                      branch_order: index + 1,
+                    });
+                  }
+                }
+              } else if (childCount < 2) {
+                // 如果节点有内容但子节点不足2个，需要生成子节点
+                // 检查下一层是否会超过目标层数
+                const nodeLayerOrder = (nodeLayer as any).layer_order ?? (nodeLayer as any).layerOrder ?? 1;
+                const nextLayerOrder = nodeLayerOrder + 1;
+
+                // 如果下一层会超过目标层数，不生成子节点
+                if (nextLayerOrder > targetLayer) {
+                  continue;
+                }
+
+                // 生成节点内容（传入最新的层数据）
+                const { options } = await generateNodeContent(node, currentLayers);
+
+                // 确保下一层存在
+
+                let nextLayer = currentLayers.find(l => {
+                  const order = (l as any).layer_order ?? (l as any).layerOrder;
+                  return order === nextLayerOrder;
+                });
+
+                if (!nextLayer) {
+                  nextLayer = await createLayer(id, {
+                    title: `第${nextLayerOrder}层`,
+                    description: '分支层',
+                    layer_order: nextLayerOrder,
+                  });
+                  // 重新加载层数据
+                  const refreshedLayers = await getLayers(id);
+                  setLayers(refreshedLayers);
+                  nextLayer = refreshedLayers.find(l => {
+                    const order = (l as any).layer_order ?? (l as any).layerOrder;
+                    return order === nextLayerOrder;
+                  }) || nextLayer;
+                }
+
+                // 为每个选项创建子节点（只创建2个）
+                for (let index = 0; index < Math.min(2, options.length); index++) {
+                  const optionLabel = options[index];
+
+                  // 计算子节点位置
+                  const childPositionX = layoutDirection === 'horizontal'
+                    ? nextLayerOrder * 400
+                    : 100 + (index - 0.5) * 200;
+                  const childPositionY = layoutDirection === 'horizontal'
+                    ? 100 + (index - 0.5) * 120
+                    : nextLayerOrder * 200;
+
+                  // 创建子节点（空内容）
+                  const childNode = await createNode(id, nextLayer.id, {
+                    title: optionLabel,
+                    content: '',
+                    duration: 30,
+                    position_x: childPositionX,
+                    position_y: childPositionY,
+                  });
+
+                  // 创建分支连接
+                  await createBranch(id, {
+                    from_node_id: node.id,
+                    to_node_id: childNode.id,
+                    branch_label: optionLabel,
+                    branch_type: 'default',
+                    branch_order: index + 1,
+                  });
+                }
+              }
+
+              // 完成一个节点，更新进度
+              completedSteps++;
+              setTaskProgress({
+                currentStep: `节点 "${node.title}" 生成完成`,
+                totalSteps: totalSteps,
+                completedSteps: completedSteps,
+                currentLayer: currentMaxLayer + 1,
+                targetLayer: targetLayer,
+                currentNodeIndex: i + 1,
+                totalNodes: nodesNeedingChildren.length,
+                isRunning: true,
+              });
+            } catch (error) {
+              console.error(`为节点 ${node.title} 生成内容失败:`, error);
+              // 继续处理下一个节点
+              completedSteps++;
+            }
+          }
+
+          // 更新当前最大层数
+          const updatedLayers = await getLayers(id);
+          setLayers(updatedLayers);
+          currentMaxLayer = getMaxLayerOrder();
+        }
+
+        // 重新加载层数据以更新 UI
+        await loadLayers();
+
+        // 关闭进度提示
+        if (loadingToast) {
+          Toast.close(loadingToast);
+        }
+
+        // 更新任务进度为完成状态
+        setTaskProgress({
+          currentStep: '生成完成！',
+          totalSteps: totalSteps,
+          completedSteps: completedSteps,
+          currentLayer: currentMaxLayer,
+          targetLayer: targetLayer,
+          currentNodeIndex: 0,
+          totalNodes: 0,
+          isRunning: false,
+        });
+
+        Toast.success(`自动生成节点完成！已生成到第 ${currentMaxLayer} 层`);
+
+        // 3秒后重置为等待状态
+        setTimeout(() => {
+          setTaskProgress({
+            currentStep: '任务已完成，等待下一个任务...',
+            totalSteps: totalSteps,
+            completedSteps: completedSteps,
+            currentLayer: currentMaxLayer,
+            targetLayer: targetLayer,
+            currentNodeIndex: 0,
+            totalNodes: 0,
+            isRunning: false,
+          });
+        }, 3000);
+      } catch (error) {
+        console.error('自动生成节点失败:', error);
+        if (loadingToast) {
+          Toast.close(loadingToast);
+        }
+
+        // 更新任务进度为失败状态
+        setTaskProgress({
+          currentStep: '生成失败',
+          totalSteps: totalSteps || 0,
+          completedSteps: completedSteps || 0,
+          currentLayer: currentMaxLayer || 0,
+          targetLayer: targetLayer,
+          currentNodeIndex: 0,
+          totalNodes: 0,
+          isRunning: false,
+        });
+
+        Toast.error(error instanceof Error ? `自动生成失败: ${error.message}` : '自动生成失败');
+
+        // 3秒后重置为等待状态
+        setTimeout(() => {
+          setTaskProgress({
+            currentStep: '任务失败，等待重试...',
+            totalSteps: totalSteps || 0,
+            completedSteps: completedSteps || 0,
+            currentLayer: currentMaxLayer || 0,
+            targetLayer: targetLayer,
+            currentNodeIndex: 0,
+            totalNodes: 0,
+            isRunning: false,
+          });
+        }, 3000);
+      } finally {
+        setIsAutoGeneratingNodes(false);
+      }
+    } catch (error) {
+      console.error('自动生成节点失败:', error);
+      if (loadingToast) {
+        Toast.close(loadingToast);
+      }
+      Toast.error(error instanceof Error ? `自动生成失败: ${error.message}` : '自动生成失败');
+      setTaskProgress({
+        currentStep: '任务失败，等待重试...',
+        totalSteps: 0,
+        completedSteps: 0,
+        currentLayer: 0,
+        targetLayer: 0,
+        currentNodeIndex: 0,
+        totalNodes: 0,
+        isRunning: false,
+      });
+      setIsAutoGeneratingNodes(false);
+    }
+  };
+
+  // 一键删除所有空内容的节点
+  const handleDeleteEmptyNodes = async () => {
+    if (!id) return;
+
+    // 确认对话框
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除所有没有内容的节点吗？此操作不可恢复。',
+      onOk: async () => {
+        setIsDeletingEmptyNodes(true);
+        let deletedCount = 0;
+        let errorCount = 0;
+
+        try {
+          // 收集所有没有内容的节点
+          const emptyNodes: StoryNode[] = [];
+          for (const layer of layers) {
+            for (const node of layer.nodes || []) {
+              // 检查节点是否有内容（content为空或只有空白字符）
+              const hasContent = node.content && node.content.trim().length > 0;
+              if (!hasContent) {
+                emptyNodes.push(node);
+              }
+            }
+          }
+
+          if (emptyNodes.length === 0) {
+            Toast.info('没有找到空内容的节点');
+            setIsDeletingEmptyNodes(false);
+            return;
+          }
+
+          // 批量删除空节点
+          for (const node of emptyNodes) {
+            try {
+              await deleteNode(id, node.id);
+              deletedCount++;
+            } catch (error) {
+              console.error(`删除节点 ${node.title} 失败:`, error);
+              errorCount++;
+            }
+          }
+
+          // 重新加载层数据
+          await loadLayers();
+
+          if (errorCount === 0) {
+            Toast.success(`成功删除 ${deletedCount} 个空节点`);
+          } else {
+            Toast.warning(`删除了 ${deletedCount} 个节点，${errorCount} 个节点删除失败`);
+          }
+        } catch (error) {
+          console.error('删除空节点失败:', error);
+          Toast.error('删除空节点失败');
+        } finally {
+          setIsDeletingEmptyNodes(false);
+        }
+      },
+    });
+  };
+
   // 更新节点内容
   const handleUpdateNodeContent = async (values: any) => {
     // 防止重复提交
@@ -1657,8 +2425,15 @@ export default function ScriptDetail() {
           onAutoLayout={handleAutoLayout}
           onGenerateInitialNode={handleGenerateInitialNode}
           isGeneratingInitialNode={isGeneratingInitialNode}
+          onAutoGenerateNodes={() => setAutoGenerateModalVisible(true)}
+          isAutoGeneratingNodes={isAutoGeneratingNodes}
+          onDeleteEmptyNodes={handleDeleteEmptyNodes}
+          isDeletingEmptyNodes={isDeletingEmptyNodes}
         />
       </Layout>
+
+      {/* 任务进度面板 */}
+      <TaskProgressPanel progress={taskProgress} isRightCollapsed={isRightCollapsed} />
 
       {/* 编辑节点内容弹窗 */}
       <Modal
@@ -1939,6 +2714,38 @@ export default function ScriptDetail() {
             placeholder="请输入层描述（可选）"
             autosize={{ minRows: 3 }}
           />
+        </Form>
+      </Modal>
+
+      {/* 一键自动生成节点弹窗 */}
+      <Modal
+        title="一键自动生成节点"
+        visible={autoGenerateModalVisible}
+        onCancel={() => {
+          setAutoGenerateModalVisible(false);
+        }}
+        onOk={handleAutoGenerateNodes}
+        confirmLoading={isAutoGeneratingNodes}
+        width={500}
+      >
+        <Form
+          getFormApi={(api) => setFormApi(api)}
+          labelPosition="left"
+          labelWidth={120}
+        >
+          <Form.InputNumber
+            field="targetLayer"
+            label="生成到第几层"
+            placeholder="请输入目标层数"
+            min={1}
+            rules={[{ required: true, message: '请输入目标层数' }]}
+            style={{ width: '100%' }}
+          />
+          <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--semi-color-fill-0)', borderRadius: 4 }}>
+            <Text type="secondary" size="small">
+              说明：系统会自动检测当前所有没有子节点（或子节点不足2个）的节点，为每个节点生成2个分支，循环生成直到达到指定层数。
+            </Text>
+          </div>
         </Form>
       </Modal>
     </AppLayout>

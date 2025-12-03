@@ -5,6 +5,8 @@ import {
   IconSort,
   IconGridStroked,
   IconTicketCode,
+  IconSetting,
+  IconDelete,
 } from '@douyinfe/semi-icons';
 import { IconTree } from '@douyinfe/semi-icons-lab';
 
@@ -19,6 +21,10 @@ interface FunctionMenuProps {
   onAutoLayout: (mode: 'tree' | 'compact') => void;
   onGenerateInitialNode: () => void;
   isGeneratingInitialNode?: boolean;
+  onAutoGenerateNodes: () => void;
+  isAutoGeneratingNodes?: boolean;
+  onDeleteEmptyNodes: () => void;
+  isDeletingEmptyNodes?: boolean;
 }
 
 export default function FunctionMenu({
@@ -29,6 +35,10 @@ export default function FunctionMenu({
   onAutoLayout,
   onGenerateInitialNode,
   isGeneratingInitialNode = false,
+  onAutoGenerateNodes,
+  isAutoGeneratingNodes = false,
+  onDeleteEmptyNodes,
+  isDeletingEmptyNodes = false,
 }: FunctionMenuProps) {
   const menuItems = [
     {
@@ -38,6 +48,22 @@ export default function FunctionMenu({
       action: onGenerateInitialNode,
       color: '#f5222d',
       disabled: isGeneratingInitialNode,
+    },
+    {
+      title: '一键自动生成节点',
+      description: isAutoGeneratingNodes ? '正在生成...' : '自动生成节点到指定层数',
+      icon: <IconSetting />,
+      action: onAutoGenerateNodes,
+      color: '#1890ff',
+      disabled: isAutoGeneratingNodes || isGeneratingInitialNode,
+    },
+    {
+      title: '一键删除空节点',
+      description: isDeletingEmptyNodes ? '正在删除...' : '删除所有没有内容的节点',
+      icon: <IconDelete />,
+      action: onDeleteEmptyNodes,
+      color: '#ff4d4f',
+      disabled: isDeletingEmptyNodes || isAutoGeneratingNodes || isGeneratingInitialNode,
     },
     {
       title: '添加层',
